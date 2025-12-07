@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Restaurant Finder React App",
+    "slug": "restaurant-finder-react-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "Restaurant Finder"
+    }
+  }
+}
