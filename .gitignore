@@ -143,3 +143,4 @@ temp/
 
 # Streamlit
 .streamlit/secrets.toml
+.vercel
