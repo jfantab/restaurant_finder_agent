@@ -130,6 +130,16 @@ def _format_place(place: Dict[str, Any], include_details: bool = False) -> str:
     if place_id:
         parts.append(f"Place ID: {place_id}")
 
+    # Always include location coordinates (critical for map display)
+    location = place.get("location")
+    if location:
+        lat = location.get("latitude")
+        lon = location.get("longitude")
+        if lat is not None and lon is not None:
+            # Use explicit labels for easier parsing by LLM
+            parts.append(f"Latitude: {lat}")
+            parts.append(f"Longitude: {lon}")
+
     if include_details:
         # Rating and reviews
         rating = place.get("rating")
@@ -150,6 +160,13 @@ def _format_place(place: Dict[str, Any], include_details: bool = False) -> str:
         if website:
             parts.append(f"Website: {website}")
 
+        # Current open/closed status
+        if "currentOpeningHours" in place:
+            current_hours = place["currentOpeningHours"]
+            is_open = current_hours.get("openNow")
+            if is_open is not None:
+                parts.append(f"Currently Open: {'Yes' if is_open else 'No'}")
+
         # Business hours
         if "regularOpeningHours" in place:
             hours = place["regularOpeningHours"]
@@ -158,10 +175,18 @@ def _format_place(place: Dict[str, Any], include_details: bool = False) -> str:
                 for desc in hours["weekdayDescriptions"]:
                     parts.append(f"  {desc}")
 
-        # Price level
+        # Price level - convert to $ symbols for easier use
         price_level = place.get("priceLevel")
         if price_level:
-            parts.append(f"Price Level: {price_level}")
+            price_map = {
+                "PRICE_LEVEL_FREE": "Free",
+                "PRICE_LEVEL_INEXPENSIVE": "$",
+                "PRICE_LEVEL_MODERATE": "$$",
+                "PRICE_LEVEL_EXPENSIVE": "$$$",
+                "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$"
+            }
+            price_display = price_map.get(price_level, price_level)
+            parts.append(f"Price Level: {price_display}")
 
         # Types/Categories
         types = place.get("types", [])
@@ -171,13 +196,11 @@ def _format_place(place: Dict[str, Any], include_details: bool = False) -> str:
             if meaningful_types:
                 parts.append(f"Categories: {', '.join(meaningful_types[:5])}")
 
-        # Location
-        location = place.get("location")
+        # Google Maps link
         if location:
             lat = location.get("latitude")
             lon = location.get("longitude")
-            if lat and lon:
-                parts.append(f"Coordinates: {lat}, {lon}")
+            if lat is not None and lon is not None:
                 parts.append(f"Google Maps: https://www.google.com/maps/search/?api=1&query={lat},{lon}")
 
     return "\n".join(parts)

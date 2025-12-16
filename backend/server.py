@@ -1,6 +1,12 @@
-"""Flask backend API for Restaurant Finder Agent."""
+"""Flask backend API for Restaurant Finder Agent.
+
+Supports two modes:
+- Local mode (RUN_LOCAL=true): Runs the agent locally using google.adk.runners
+- Cloud mode (RUN_LOCAL=false): Connects to deployed Vertex AI agent
+"""
 
 import os
+import sys
 import json
 import asyncio
 from flask import Flask, request, jsonify, Response
@@ -10,42 +16,87 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Import Vertex AI modules
-import vertexai
-from vertexai import agent_engines
-
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React Native web app
 
-# Initialize Vertex AI and connect to deployed agent
+# Configuration
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
 location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-west1")
 agent_name = "restaurant_finder_agent"
+run_local = os.getenv("RUN_LOCAL", "false").lower() == "true"
 
 if not project_id:
     raise ValueError("GOOGLE_CLOUD_PROJECT not set in .env file")
 
-# Initialize Vertex AI
-vertexai.init(project=project_id, location=location)
+# Agent and runner references (initialized based on mode)
+agent = None
+local_runner = None
+local_agent = None
 
-# Find the deployed agent
-agents_list = list(agent_engines.list())
-deployed_agent = next(
-    (agent for agent in agents_list if agent.display_name == agent_name),
-    None
-)
+if run_local:
+    # Local mode: Import and create the agent locally
+    print("🏠 Starting in LOCAL mode...")
 
-if not deployed_agent:
-    raise ValueError(f"Agent '{agent_name}' not found in Vertex AI. Please deploy it first.")
+    # Add parent directory to path for imports
+    parent_path = os.path.join(os.path.dirname(__file__), '..')
+    sys.path.insert(0, parent_path)
 
-agent = deployed_agent
-print(f"✓ Connected to deployed agent: {deployed_agent.resource_name}")
+    from restaurant_finder.setup import setup_environment
+    from restaurant_finder.agents import create_router_agent
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+
+    # Initialize environment and Vertex AI
+    setup_environment()
+
+    # Check if we should use Cloud Run MCP server
+    use_cloud_mcp = os.getenv("USE_CLOUD_MCP", "false").lower() == "true"
+
+    # Create the local agent (router agent handles routing and follow-ups)
+    local_agent = create_router_agent(use_cloud_mcp=use_cloud_mcp)
+
+    # Create session service and runner
+    session_service = InMemorySessionService()
+    local_runner = Runner(
+        agent=local_agent,
+        app_name="restaurant_finder_backend",
+        session_service=session_service
+    )
+
+    print(f"✓ Local agent initialized: {local_agent.name}")
+    print(f"  - Using {'Cloud MCP' if use_cloud_mcp else 'Local MCP'} for Google Places")
+else:
+    # Cloud mode: Connect to deployed Vertex AI agent
+    print("☁️  Starting in CLOUD mode...")
+
+    import vertexai
+    from vertexai import agent_engines
+
+    # Initialize Vertex AI
+    vertexai.init(project=project_id, location=location)
+
+    # Find the deployed agent
+    agents_list = list(agent_engines.list())
+    deployed_agent = next(
+        (agent_obj for agent_obj in agents_list if agent_obj.display_name == agent_name),
+        None
+    )
+
+    if not deployed_agent:
+        raise ValueError(f"Agent '{agent_name}' not found in Vertex AI. Please deploy it first.")
+
+    agent = deployed_agent
+    print(f"✓ Connected to deployed agent: {deployed_agent.resource_name}")
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
-    return jsonify({"status": "healthy", "agent": "initialized"})
+    return jsonify({
+        "status": "healthy",
+        "mode": "local" if run_local else "cloud",
+        "agent": local_agent.name if run_local else agent.display_name
+    })
 
 @app.route('/api/search', methods=['POST'])
 def search_restaurants():
@@ -55,6 +106,7 @@ def search_restaurants():
     {
         "query": "Italian restaurants",
         "location": {"lat": 37.7749, "lng": -122.4194},
+        "session_id": "optional-session-id-for-follow-ups",
         "preferences": {
             "cuisine": "Italian",
             "price_range": "$$",
@@ -67,6 +119,7 @@ def search_restaurants():
         query = data.get('query', '')
         location = data.get('location')
         preferences = data.get('preferences', {})
+        session_id = data.get('session_id')  # Client provides session_id for follow-ups
 
         # Build context with preferences
         context_parts = []
@@ -86,35 +139,16 @@ def search_restaurants():
         context = "\n".join(context_parts) if context_parts else ""
         full_prompt = f"{context}\n\nUser request: {query}" if context else query
 
-        # Use async_stream_query for deployed ADK agents
-        async def get_response():
-            last_recommendation_response = None
-            full_trace = []
+        if run_local:
+            # Local mode: Use the Runner to execute the agent
+            response_text, used_session_id = asyncio.run(run_local_agent(full_prompt, session_id))
+        else:
+            # Cloud mode: Use async_stream_query for deployed ADK agents
+            response_text = asyncio.run(get_cloud_response(full_prompt))
+            used_session_id = session_id
 
-            async for event in agent.async_stream_query(
-                user_id="react_user",
-                message=full_prompt
-            ):
-                # Store full trace for debugging
-                full_trace.append(str(event))
-
-                # Check if this is the final recommendation agent response
-                if isinstance(event, dict):
-                    if event.get('author') == 'RestaurantRecommendationAgent':
-                        content = event.get('content', {})
-                        parts = content.get('parts', [])
-                        for part in parts:
-                            if 'text' in part:
-                                last_recommendation_response = part['text']
-
-            # Return the final recommendation or the full trace
-            if last_recommendation_response:
-                return last_recommendation_response
-            else:
-                return "\n".join(full_trace) if full_trace else "No response"
-
-        # Run async function
-        response_text = asyncio.run(get_response())
+        print(f"[DEBUG] Response text length: {len(response_text)}")
+        print(f"[DEBUG] Response text first 300 chars: {response_text[:300]}")
 
         # Try to parse restaurant data from response
         restaurants = extract_restaurants_from_response(response_text)
@@ -122,26 +156,163 @@ def search_restaurants():
         # Extract summary from response
         summary = extract_summary_from_response(response_text)
 
+        print(f"[DEBUG] Extracted {len(restaurants) if restaurants else 0} restaurants")
+        print(f"[DEBUG] Summary: {summary[:100] if summary else 'None'}...")
+
         return jsonify({
             "success": True,
             "response": summary or response_text,
-            "restaurants": restaurants
+            "restaurants": restaurants,
+            "session_id": used_session_id  # Return session_id for client to use in follow-ups
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
 
+
+async def run_local_agent(prompt: str, session_id: str = None) -> tuple[str, str]:
+    """Run the local agent and return the response text.
+
+    Args:
+        prompt: The user prompt to send to the agent
+        session_id: Optional session ID for conversation continuity.
+                   If None, a new session is created.
+
+    Returns:
+        Tuple of (response_text, session_id)
+    """
+    from google.genai import types
+    import uuid
+
+    user_id = "flask_user"
+
+    # Use provided session_id or create a new one
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+
+    # Try to get existing session, or create a new one
+    try:
+        session = await local_runner.session_service.get_session(
+            app_name="restaurant_finder_backend",
+            user_id=user_id,
+            session_id=session_id
+        )
+        if session is None:
+            raise ValueError("Session not found")
+    except Exception as e:
+        # Session doesn't exist or was invalidated (e.g., server restart), create a new one
+        print(f"Session {session_id} not found, creating new session: {e}")
+        # Generate a new session_id since the old one is invalid
+        session_id = str(uuid.uuid4())
+        session = await local_runner.session_service.create_session(
+            app_name="restaurant_finder_backend",
+            user_id=user_id,
+            session_id=session_id
+        )
+
+    # Create the user message
+    user_message = types.Content(
+        role="user",
+        parts=[types.Part(text=prompt)]
+    )
+
+    # Run the agent and collect responses (use async version)
+    last_recommendation_response = None
+    last_router_response = None
+    full_responses = []
+
+    async for event in local_runner.run_async(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=user_message
+    ):
+        # Check for final response from recommendation agent (inside the tool)
+        if hasattr(event, 'author') and event.author == 'RestaurantRecommendationAgent':
+            if hasattr(event, 'content') and event.content:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        last_recommendation_response = part.text
+
+        # Check for response from router agent
+        if hasattr(event, 'author') and event.author == 'router_agent':
+            if hasattr(event, 'content') and event.content:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        last_router_response = part.text
+
+        # Collect all text responses
+        if hasattr(event, 'content') and event.content:
+            for part in event.content.parts:
+                if hasattr(part, 'text') and part.text:
+                    full_responses.append(part.text)
+
+    # Return the recommendation JSON if available, otherwise router response, otherwise last response
+    # Prefer the recommendation agent's structured output for restaurant searches
+    print(f"[DEBUG] last_recommendation_response: {last_recommendation_response[:100] if last_recommendation_response else 'None'}")
+    print(f"[DEBUG] last_router_response: {last_router_response[:100] if last_router_response else 'None'}")
+    print(f"[DEBUG] full_responses count: {len(full_responses)}")
+
+    if last_recommendation_response:
+        print("[DEBUG] Returning last_recommendation_response")
+        return last_recommendation_response, session_id
+    elif last_router_response:
+        print("[DEBUG] Returning last_router_response")
+        return last_router_response, session_id
+    elif full_responses:
+        print("[DEBUG] Returning last full_response")
+        return full_responses[-1], session_id
+    else:
+        return "No response from agent", session_id
+
+
+async def get_cloud_response(prompt: str) -> str:
+    """Get response from the deployed cloud agent.
+
+    Args:
+        prompt: The user prompt to send to the agent
+
+    Returns:
+        The final response text from the agent
+    """
+    last_recommendation_response = None
+    full_trace = []
+
+    async for event in agent.async_stream_query(
+        user_id="react_user",
+        message=prompt
+    ):
+        # Store full trace for debugging
+        full_trace.append(str(event))
+
+        # Check if this is the final recommendation agent response
+        if isinstance(event, dict):
+            if event.get('author') == 'RestaurantRecommendationAgent':
+                content = event.get('content', {})
+                parts = content.get('parts', [])
+                for part in parts:
+                    if 'text' in part:
+                        last_recommendation_response = part['text']
+
+    # Return the final recommendation or the full trace
+    if last_recommendation_response:
+        return last_recommendation_response
+    else:
+        return "\n".join(full_trace) if full_trace else "No response"
+
 @app.route('/api/stream-search', methods=['POST'])
 def stream_search_restaurants():
-    """Stream restaurant search results (for deployed agents)."""
+    """Stream restaurant search results (supports both local and cloud modes)."""
     try:
         data = request.json
         query = data.get('query', '')
         location = data.get('location')
         preferences = data.get('preferences', {})
+        session_id = data.get('session_id')  # Client provides session_id for follow-ups
 
         # Build context with preferences
         context_parts = []
@@ -163,40 +334,31 @@ def stream_search_restaurants():
 
         def generate():
             """Generator function for streaming responses."""
+            nonlocal session_id
             try:
-                # For deployed agents, use async_stream_query
-                import asyncio
+                if run_local:
+                    # Local mode: Use the Runner (async)
+                    response_text, used_session_id = asyncio.run(run_local_agent(full_prompt, session_id))
+                else:
+                    # Cloud mode: Use async_stream_query
+                    response_text = asyncio.run(get_cloud_response(full_prompt))
+                    used_session_id = session_id
 
-                async def stream_response():
-                    last_recommendation_response = None
-
-                    async for event in agent.async_stream_query(
-                        user_id="react_user",
-                        message=full_prompt
-                    ):
-                        # Check if this is the final recommendation agent response
-                        if isinstance(event, dict):
-                            if event.get('author') == 'RestaurantRecommendationAgent':
-                                content = event.get('content', {})
-                                parts = content.get('parts', [])
-                                for part in parts:
-                                    if 'text' in part:
-                                        last_recommendation_response = part['text']
-
-                    return last_recommendation_response
-
-                response_text = asyncio.run(stream_response())
                 restaurants = extract_restaurants_from_response(response_text)
+                summary = extract_summary_from_response(response_text)
 
                 result = {
                     "success": True,
-                    "response": response_text,
-                    "restaurants": restaurants
+                    "response": summary or response_text,
+                    "restaurants": restaurants,
+                    "session_id": used_session_id  # Return session_id for client to use in follow-ups
                 }
 
                 yield f"data: {json.dumps(result)}\n\n"
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 error_result = {
                     "success": False,
                     "error": str(e)
@@ -211,6 +373,51 @@ def stream_search_restaurants():
             "error": str(e)
         }), 500
 
+def normalize_json_quotes(text):
+    """Replace curly/smart quotes with straight ASCII quotes.
+
+    This fixes JSON parsing issues when the LLM outputs curly quotes
+    instead of standard ASCII double quotes.
+
+    Args:
+        text: The text containing potential curly quotes
+
+    Returns:
+        Text with all quotes normalized to ASCII
+    """
+    replacements = {
+        '"': '"', '"': '"',  # Double curly quotes
+        ''': "'", ''': "'",  # Single curly quotes
+        '「': '"', '」': '"',  # CJK quotes
+        '『': '"', '』': '"',  # CJK double quotes
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def fix_invalid_json_escapes(text):
+    r"""Fix invalid JSON escape sequences.
+
+    JSON only allows these escape sequences: \" \\ \/ \b \f \n \r \t \uXXXX
+    LLMs sometimes output invalid escapes like \' which breaks JSON parsing.
+
+    Args:
+        text: The JSON text with potential invalid escapes
+
+    Returns:
+        Text with invalid escapes fixed
+    """
+    import re
+    # Fix \' (escaped single quote) - not valid in JSON, just use '
+    text = re.sub(r"(?<!\\)\\'", "'", text)
+    # Fix other common invalid escapes by removing the backslash
+    # Match backslash followed by a character that's not a valid JSON escape
+    # Valid: " \ / b f n r t u
+    text = re.sub(r'\\([^"\\/bfnrtu])', r'\1', text)
+    return text
+
+
 def extract_restaurants_from_response(response_text):
     """Extract restaurant data from agent response.
 
@@ -222,57 +429,99 @@ def extract_restaurants_from_response(response_text):
     """
     import re
 
+    # Normalize quotes and fix invalid escapes before processing
+    response_text = normalize_json_quotes(response_text)
+    response_text = fix_invalid_json_escapes(response_text)
+
+    print(f"[DEBUG] extract_restaurants_from_response called with {len(response_text)} chars")
+    print(f"[DEBUG] First 200 chars: {response_text[:200]}")
+
+    data = None
+
     try:
-        # Try to find JSON in the response
-        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-        if json_match:
-            json_text = json_match.group(1)
-        else:
-            # Try to find raw JSON object
-            start_idx = response_text.find('{')
-            if start_idx != -1 and '"restaurants"' in response_text[start_idx:]:
-                # Find the matching closing brace
-                brace_count = 0
-                in_string = False
-                escape_next = False
+        # First, try to parse the whole response as JSON directly
+        try:
+            data = json.loads(response_text, strict=False)
+            print(f"[DEBUG] Parsed entire response as JSON, keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+        except json.JSONDecodeError:
+            print("[DEBUG] Could not parse entire response as JSON, trying to extract...")
 
-                for i in range(start_idx, len(response_text)):
-                    char = response_text[i]
+        # If direct parsing didn't work, try to find JSON in the response
+        if data is None:
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(1)
+                print(f"[DEBUG] Found JSON in code block")
+            else:
+                # Try to find raw JSON object
+                start_idx = response_text.find('{')
+                if start_idx != -1:
+                    # Find the matching closing brace
+                    brace_count = 0
+                    in_string = False
+                    escape_next = False
 
-                    if escape_next:
-                        escape_next = False
-                        continue
+                    for i in range(start_idx, len(response_text)):
+                        char = response_text[i]
 
-                    if char == '\\':
-                        escape_next = True
-                        continue
+                        if escape_next:
+                            escape_next = False
+                            continue
 
-                    if char == '"':
-                        in_string = not in_string
-                        continue
+                        if char == '\\':
+                            escape_next = True
+                            continue
 
-                    if not in_string:
-                        if char == '{':
-                            brace_count += 1
-                        elif char == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                json_text = response_text[start_idx:i+1]
-                                break
+                        if char == '"':
+                            in_string = not in_string
+                            continue
+
+                        if not in_string:
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    json_text = response_text[start_idx:i+1]
+                                    break
+                    else:
+                        json_text = response_text
                 else:
                     json_text = response_text
-            else:
-                json_text = response_text
 
-        # Parse the JSON
-        data = json.loads(json_text)
+            # Parse the extracted JSON (use strict=False to handle control characters)
+            data = json.loads(json_text, strict=False)
+            print(f"[DEBUG] Parsed extracted JSON, keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+
+        # Handle nested router response: {"restaurant_finder_response": {"result": "<JSON string>"}}
+        if isinstance(data, dict) and 'restaurant_finder_response' in data:
+            print("[DEBUG] Found restaurant_finder_response wrapper")
+            result = data['restaurant_finder_response'].get('result', '')
+            print(f"[DEBUG] Result type: {type(result)}, first 100 chars: {str(result)[:100]}")
+            if isinstance(result, str):
+                # Parse the nested JSON string (use strict=False for control characters)
+                data = json.loads(result, strict=False)
+                print(f"[DEBUG] Parsed nested JSON, keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+            elif isinstance(result, dict):
+                data = result
 
         # Extract restaurants array
-        if 'restaurants' in data and isinstance(data['restaurants'], list):
+        if isinstance(data, dict) and 'restaurants' in data and isinstance(data['restaurants'], list):
+            print(f"[DEBUG] Found {len(data['restaurants'])} restaurants in response")
             restaurants = []
             for restaurant in data['restaurants']:
                 # Only include restaurants that have coordinates
                 if restaurant.get('latitude') and restaurant.get('longitude'):
+                    # Extract reviews if available
+                    reviews = []
+                    if restaurant.get('reviews'):
+                        for review in restaurant['reviews'][:3]:  # Limit to 3 reviews
+                            reviews.append({
+                                'author': review.get('author', 'Anonymous'),
+                                'rating': review.get('rating'),
+                                'text': review.get('text', '')
+                            })
+
                     restaurants.append({
                         'name': restaurant.get('name', 'Unknown'),
                         'address': restaurant.get('address', ''),
@@ -284,11 +533,17 @@ def extract_restaurants_from_response(response_text):
                         'distance_miles': restaurant.get('distance_miles'),
                         'phone': restaurant.get('phone', ''),
                         'website': restaurant.get('website', ''),
-                        'description': restaurant.get('description', '')
+                        'description': restaurant.get('description', ''),
+                        'reviews': reviews if reviews else None
                     })
+            print(f"[DEBUG] Extracted {len(restaurants)} restaurants with coordinates")
             return restaurants if restaurants else None
+        else:
+            print(f"[DEBUG] No restaurants array found in data")
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"Error parsing restaurant data: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
     return None
@@ -304,53 +559,75 @@ def extract_summary_from_response(response_text):
     """
     import re
 
+    # Normalize quotes and fix invalid escapes before processing
+    response_text = normalize_json_quotes(response_text)
+    response_text = fix_invalid_json_escapes(response_text)
+
+    data = None
+
     try:
-        # Try to find JSON in the response
-        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-        if json_match:
-            json_text = json_match.group(1)
-        else:
-            # Try to find raw JSON object
-            start_idx = response_text.find('{')
-            if start_idx != -1 and '"restaurants"' in response_text[start_idx:]:
-                # Find the matching closing brace
-                brace_count = 0
-                in_string = False
-                escape_next = False
+        # First, try to parse the whole response as JSON directly
+        try:
+            data = json.loads(response_text, strict=False)
+        except json.JSONDecodeError:
+            pass
 
-                for i in range(start_idx, len(response_text)):
-                    char = response_text[i]
+        # If direct parsing didn't work, try to find JSON in the response
+        if data is None:
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(1)
+            else:
+                # Try to find raw JSON object
+                start_idx = response_text.find('{')
+                if start_idx != -1:
+                    # Find the matching closing brace
+                    brace_count = 0
+                    in_string = False
+                    escape_next = False
 
-                    if escape_next:
-                        escape_next = False
-                        continue
+                    for i in range(start_idx, len(response_text)):
+                        char = response_text[i]
 
-                    if char == '\\':
-                        escape_next = True
-                        continue
+                        if escape_next:
+                            escape_next = False
+                            continue
 
-                    if char == '"':
-                        in_string = not in_string
-                        continue
+                        if char == '\\':
+                            escape_next = True
+                            continue
 
-                    if not in_string:
-                        if char == '{':
-                            brace_count += 1
-                        elif char == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                json_text = response_text[start_idx:i+1]
-                                break
+                        if char == '"':
+                            in_string = not in_string
+                            continue
+
+                        if not in_string:
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    json_text = response_text[start_idx:i+1]
+                                    break
+                    else:
+                        json_text = response_text
                 else:
                     json_text = response_text
-            else:
-                json_text = response_text
 
-        # Parse the JSON
-        data = json.loads(json_text)
+            # Parse the extracted JSON (use strict=False to handle control characters)
+            data = json.loads(json_text, strict=False)
+
+        # Handle nested router response: {"restaurant_finder_response": {"result": "<JSON string>"}}
+        if isinstance(data, dict) and 'restaurant_finder_response' in data:
+            result = data['restaurant_finder_response'].get('result', '')
+            if isinstance(result, str):
+                # Parse the nested JSON string (use strict=False for control characters)
+                data = json.loads(result, strict=False)
+            elif isinstance(result, dict):
+                data = result
 
         # Extract summary
-        if 'summary' in data:
+        if isinstance(data, dict) and 'summary' in data:
             return data['summary']
 
     except (json.JSONDecodeError, KeyError, ValueError) as e:

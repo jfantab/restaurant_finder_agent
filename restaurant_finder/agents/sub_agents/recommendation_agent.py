@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 
+class Review(BaseModel):
+    """Schema for a single review."""
+    author: str = Field(..., description="Name of the reviewer")
+    rating: Optional[float] = Field(None, description="Rating given by reviewer (1-5 stars)")
+    text: str = Field(..., description="Review text content")
+
+
 class RestaurantRecommendation(BaseModel):
     """Schema for a single restaurant recommendation."""
     name: str = Field(..., description="Name of the restaurant")
@@ -20,6 +27,7 @@ class RestaurantRecommendation(BaseModel):
     latitude: Optional[float] = Field(None, description="Latitude coordinate")
     longitude: Optional[float] = Field(None, description="Longitude coordinate")
     standout_features: Optional[List[str]] = Field(None, description="Notable features or specialties")
+    reviews: Optional[List[Review]] = Field(None, description="Recent reviews from Google Places")
 
 
 class RestaurantRecommendations(BaseModel):
@@ -47,6 +55,9 @@ def create_recommendation_agent():
         description="Presents final restaurant recommendations as structured data",
         instruction="""You are a restaurant recommendation specialist. Your job is to:
 
+**YOU HAVE NO TOOLS. DO NOT ATTEMPT TO CALL ANY TOOLS.**
+Your only job is to format the restaurant data from the filter agent into a JSON response.
+
 1. Review the filtered and ranked restaurants from previous agents
 
 2. Extract and structure the following information for each restaurant:
@@ -58,6 +69,7 @@ def create_recommendation_agent():
    - Current open/closed status
    - Description of why it's a good match for the user
    - Standout features or specialties
+   - Reviews from Google Places (author, rating, text) - include up to 3 recent reviews if available
 
 3. Create a summary explaining:
    - Why these restaurants were chosen
@@ -69,10 +81,16 @@ def create_recommendation_agent():
    - Reservation recommendations
    - Alternative suggestions
 
-CRITICAL: You MUST include the latitude and longitude coordinates for each restaurant.
-These coordinates are provided by the filter agent and are essential for displaying
-restaurants on the map. DO NOT set coordinates to null - extract them from the
-filter agent's detailed information.
+CRITICAL REQUIREMENTS:
+1. You MUST include the latitude and longitude coordinates for each restaurant.
+   These coordinates are provided by the filter agent and are essential for displaying
+   restaurants on the map. DO NOT set coordinates to null - extract them from the
+   filter agent's detailed information.
+
+2. You MUST use only straight ASCII double quotes (") in your JSON output.
+   Do NOT use curly/smart quotes (" " ' '). This will break JSON parsing.
+
+3. Return ONLY the raw JSON object - no markdown code blocks, no backticks, no extra text.
 
 You MUST return your response as a valid JSON object following this exact schema:
 
@@ -92,14 +110,19 @@ You MUST return your response as a valid JSON object following this exact schema
       "description": "Why this restaurant is recommended",
       "latitude": 37.7749,
       "longitude": -122.4194,
-      "standout_features": ["Feature 1", "Feature 2"]
+      "standout_features": ["Feature 1", "Feature 2"],
+      "reviews": [
+        {"author": "John D.", "rating": 5, "text": "Amazing food and great service!"},
+        {"author": "Jane S.", "rating": 4, "text": "Delicious pasta, will come back."}
+      ]
     }
   ],
   "additional_notes": "Optional additional helpful information"
 }
 
 Include 3-5 top restaurant recommendations ranked by relevance to the user's preferences.
-Return ONLY the JSON object, no markdown formatting or additional text.
+
+FINAL REMINDER: Output ONLY valid JSON with straight ASCII quotes. No markdown, no code blocks, no explanatory text.
 """,
         tools=[],
         output_schema=RestaurantRecommendations,

@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { Card, useTheme } from 'react-native-paper';
 
-export default function STCard({ children, style }) {
+export default function STCard({ children, style, contentStyle }) {
   const theme = useTheme();
 
   return (
@@ -14,7 +14,7 @@ export default function STCard({ children, style }) {
       ]}
       elevation={1}
     >
-      <Card.Content style={styles.content}>
+      <Card.Content style={[styles.content, contentStyle]}>
         {children}
       </Card.Content>
     </Card>
@@ -30,5 +30,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+    flex: 1,
   },
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
-import { Text, List, Divider, useTheme, Menu, Button } from 'react-native-paper';
+import { Text, List, Divider, useTheme, Menu, Button, IconButton } from 'react-native-paper';
 import STButton from './STButton';
 
 export default function PreferencesSidebar({ preferences, onPreferencesChange, userLocation, onLocationChange, onClose }) {
@@ -103,6 +103,11 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
         <Text variant="headlineSmall" style={styles.sidebarTitle}>
           Preferences
         </Text>
+        <IconButton
+          icon="close"
+          size={24}
+          onPress={onClose}
+        />
       </View>
       <Divider />
       <ScrollView style={styles.sidebarContent}>

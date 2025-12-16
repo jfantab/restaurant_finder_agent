@@ -1,9 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, memo } from 'react';
 import { StyleSheet, View, Platform } from 'react-native';
 import { Text, IconButton, useTheme } from 'react-native-paper';
 import config from '../../config';
 
-export default function GoogleMap({ restaurants, userLocation, onLocationChange, selectedRestaurant }) {
+function GoogleMap({ restaurants, userLocation, onLocationChange, selectedRestaurant }) {
   const mapContainerRef = useRef(null);
   const iframeRef = useRef(null);
   const theme = useTheme();
@@ -28,11 +28,15 @@ export default function GoogleMap({ restaurants, userLocation, onLocationChange,
   // Handle selected restaurant changes
   useEffect(() => {
     if (Platform.OS === 'web' && iframeRef.current && selectedRestaurant) {
-      // Send message to iframe to select restaurant
-      iframeRef.current.contentWindow?.postMessage({
-        type: 'SELECT_RESTAURANT',
-        restaurant: selectedRestaurant
-      }, '*');
+      // Small delay to ensure iframe map is fully initialized
+      const timer = setTimeout(() => {
+        console.log('Sending SELECT_RESTAURANT:', selectedRestaurant.name, selectedRestaurant.latitude, selectedRestaurant.longitude);
+        iframeRef.current?.contentWindow?.postMessage({
+          type: 'SELECT_RESTAURANT',
+          restaurant: selectedRestaurant
+        }, '*');
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [selectedRestaurant]);
 
@@ -64,38 +68,76 @@ export default function GoogleMap({ restaurants, userLocation, onLocationChange,
 
         <script>
           let map, userMarker, restaurantMarkers = [], infoWindows = [];
+          let mapReady = false;
+          let pendingSelection = null;
+
+          function selectRestaurant(selectedRestaurant) {
+            console.log('selectRestaurant called:', selectedRestaurant.name, 'lat:', selectedRestaurant.latitude, 'lng:', selectedRestaurant.longitude);
+
+            // Make sure map is initialized
+            if (!mapReady || !map || restaurantMarkers.length === 0) {
+              console.log('Map not ready yet - mapReady:', mapReady, 'markers:', restaurantMarkers.length);
+              pendingSelection = selectedRestaurant;
+              return;
+            }
+
+            console.log('Searching through', restaurantMarkers.length, 'markers');
+
+            // Find the matching marker by comparing with marker positions
+            let foundMarker = null;
+            let foundInfoWindow = null;
+
+            for (let i = 0; i < restaurantMarkers.length; i++) {
+              const marker = restaurantMarkers[i];
+              const pos = marker.getPosition();
+              const markerLat = pos ? pos.lat() : null;
+              const markerLng = pos ? pos.lng() : null;
+
+              if (pos &&
+                  Math.abs(markerLat - selectedRestaurant.latitude) < 0.0001 &&
+                  Math.abs(markerLng - selectedRestaurant.longitude) < 0.0001) {
+                foundMarker = marker;
+                foundInfoWindow = infoWindows[i];
+                console.log('Found matching marker at index', i);
+                break;
+              }
+            }
+
+            if (foundMarker) {
+              // Close all info windows
+              infoWindows.forEach(iw => iw.close());
+
+              // Open the selected restaurant's info window
+              foundInfoWindow.open(map, foundMarker);
+
+              // Center map on the selected marker with a zoom
+              map.setCenter(foundMarker.getPosition());
+              map.setZoom(15);
+
+              // Highlight the marker by scaling up the icon temporarily
+              // (BOUNCE animation causes the label to disappear with custom SVG icons)
+              const originalIcon = foundMarker.getIcon();
+              const highlightedIcon = {
+                ...originalIcon,
+                scale: 2.0,
+                fillColor: '#C62828'
+              };
+              foundMarker.setIcon(highlightedIcon);
+              setTimeout(() => foundMarker.setIcon(originalIcon), 1500);
+            } else {
+              console.log('No marker found for:', selectedRestaurant.name, 'looking for lat:', selectedRestaurant.latitude, 'lng:', selectedRestaurant.longitude);
+              // Log all marker positions for debugging
+              restaurantMarkers.forEach((m, idx) => {
+                const p = m.getPosition();
+                console.log('Marker', idx, ':', m.getTitle(), 'lat:', p?.lat(), 'lng:', p?.lng());
+              });
+            }
+          }
 
           // Listen for messages from parent window to select restaurant
           window.addEventListener('message', (event) => {
             if (event.data.type === 'SELECT_RESTAURANT' && event.data.restaurant) {
-              const restaurant = event.data.restaurant;
-              // Find the matching marker by restaurant name and coordinates
-              const markerIndex = restaurantMarkers.findIndex((marker, idx) => {
-                const restaurants = ${restaurantsJSON};
-                const r = restaurants[idx];
-                return r.name === restaurant.name &&
-                       r.latitude === restaurant.latitude &&
-                       r.longitude === restaurant.longitude;
-              });
-
-              if (markerIndex !== -1) {
-                const marker = restaurantMarkers[markerIndex];
-                const infoWindow = infoWindows[markerIndex];
-
-                // Close all info windows
-                infoWindows.forEach(iw => iw.close());
-
-                // Open the selected restaurant's info window
-                infoWindow.open(map, marker);
-
-                // Center map on the selected marker with a zoom
-                map.setCenter(marker.getPosition());
-                map.setZoom(15);
-
-                // Animate the marker
-                marker.setAnimation(google.maps.Animation.BOUNCE);
-                setTimeout(() => marker.setAnimation(null), 2000);
-              }
+              selectRestaurant(event.data.restaurant);
             }
           });
 
@@ -235,6 +277,15 @@ export default function GoogleMap({ restaurants, userLocation, onLocationChange,
                 });
               }
             });
+
+            // Mark map as ready and process any pending selection
+            mapReady = true;
+            console.log('Map initialized with', restaurantMarkers.length, 'markers');
+            if (pendingSelection) {
+              console.log('Processing pending selection:', pendingSelection.name);
+              selectRestaurant(pendingSelection);
+              pendingSelection = null;
+            }
           }
         </script>
 
@@ -269,3 +320,42 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 });
+
+// Custom comparison to prevent unnecessary re-renders
+function arePropsEqual(prevProps, nextProps) {
+  // Compare restaurants by length and content (not reference)
+  const prevRestaurants = prevProps.restaurants || [];
+  const nextRestaurants = nextProps.restaurants || [];
+
+  if (prevRestaurants.length !== nextRestaurants.length) {
+    return false;
+  }
+
+  // Check if restaurant data actually changed
+  for (let i = 0; i < prevRestaurants.length; i++) {
+    if (prevRestaurants[i].latitude !== nextRestaurants[i].latitude ||
+        prevRestaurants[i].longitude !== nextRestaurants[i].longitude ||
+        prevRestaurants[i].name !== nextRestaurants[i].name) {
+      return false;
+    }
+  }
+
+  // Compare userLocation
+  const prevLoc = prevProps.userLocation;
+  const nextLoc = nextProps.userLocation;
+  if (prevLoc?.lat !== nextLoc?.lat || prevLoc?.lng !== nextLoc?.lng) {
+    return false;
+  }
+
+  // Compare selectedRestaurant
+  const prevSelected = prevProps.selectedRestaurant;
+  const nextSelected = nextProps.selectedRestaurant;
+  if (prevSelected?.latitude !== nextSelected?.latitude ||
+      prevSelected?.longitude !== nextSelected?.longitude) {
+    return false;
+  }
+
+  return true;
+}
+
+export default memo(GoogleMap, arePropsEqual);

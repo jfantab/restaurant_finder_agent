@@ -15,12 +15,41 @@ import PreferencesSidebar from '../components/PreferencesSidebar';
 import config from '../../config';
 
 const API_URL = config.API_URL;
+const STORAGE_KEY = 'restaurant_finder_conversations';
 
-export default function RestaurantFinderPage() {
+// Helper functions for localStorage
+const loadConversationsFromStorage = () => {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    return parsed;
+                }
+            }
+        } catch (e) {
+            console.error('Error loading conversations from storage:', e);
+        }
+    }
+    return [{ messages: [], restaurants: [], sessionId: null }];
+};
+
+const saveConversationsToStorage = (conversations) => {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+        } catch (e) {
+            console.error('Error saving conversations to storage:', e);
+        }
+    }
+};
+
+export default function RestaurantFinderPage({ user, onLogout }) {
     // Conversation history management
-    const [conversations, setConversations] = useState([
-        { messages: [], restaurants: [] },
-    ]);
+    // Each conversation has: messages, restaurants, and session_id (for backend continuity)
+    // Load from localStorage on initial render
+    const [conversations, setConversations] = useState(() => loadConversationsFromStorage());
     const [currentConversationIndex, setCurrentConversationIndex] = useState(0);
 
     const [inputText, setInputText] = useState('');
@@ -38,7 +67,20 @@ export default function RestaurantFinderPage() {
     // Get current conversation data
     const currentConversation = conversations[currentConversationIndex];
     const messages = currentConversation.messages;
-    const restaurants = currentConversation.restaurants;
+
+    // Collect ALL restaurants from ALL messages in the conversation (for map display)
+    // This ensures map markers show cumulative results (1,2,3... then 6,7,8... etc)
+    const allRestaurants = messages.reduce((acc, msg) => {
+        if (msg.restaurants && msg.restaurants.length > 0) {
+            return [...acc, ...msg.restaurants];
+        }
+        return acc;
+    }, []);
+
+    // Save conversations to localStorage whenever they change
+    useEffect(() => {
+        saveConversationsToStorage(conversations);
+    }, [conversations]);
 
     // Get user location on mount
     useEffect(() => {
@@ -70,23 +112,13 @@ export default function RestaurantFinderPage() {
         setInputText('');
         setLoading(true);
 
-        // Create a new conversation if current one has messages
-        if (messages.length > 0) {
-            const newConversation = {
-                messages: [userMessage],
-                restaurants: [],
-            };
-            setConversations([...conversations, newConversation]);
-            setCurrentConversationIndex(conversations.length);
-        } else {
-            // Update current conversation with user message
-            const updatedConversations = [...conversations];
-            updatedConversations[currentConversationIndex] = {
-                ...updatedConversations[currentConversationIndex],
-                messages: [userMessage],
-            };
-            setConversations(updatedConversations);
-        }
+        // Add user message to current conversation (don't create new conversation)
+        const updatedConversations = [...conversations];
+        updatedConversations[currentConversationIndex] = {
+            ...updatedConversations[currentConversationIndex],
+            messages: [...updatedConversations[currentConversationIndex].messages, userMessage],
+        };
+        setConversations(updatedConversations);
 
         try {
             const response = await fetch(`${API_URL}/api/search`, {
@@ -98,6 +130,7 @@ export default function RestaurantFinderPage() {
                     query: query,
                     location: userLocation,
                     preferences: preferences,
+                    session_id: currentConversation.sessionId, // Send session_id for conversation continuity
                 }),
             });
 
@@ -110,19 +143,16 @@ export default function RestaurantFinderPage() {
                     restaurants: data.restaurants,
                 };
 
-                // Update the conversation with assistant message and restaurants
+                // Update the conversation with assistant message, restaurants, and session_id
                 setConversations((prev) => {
                     const updated = [...prev];
-                    const targetIndex =
-                        messages.length > 0
-                            ? prev.length - 1
-                            : currentConversationIndex;
-                    updated[targetIndex] = {
+                    updated[currentConversationIndex] = {
                         messages: [
-                            ...updated[targetIndex].messages,
+                            ...updated[currentConversationIndex].messages,
                             assistantMessage,
                         ],
-                        restaurants: data.restaurants || [],
+                        restaurants: data.restaurants || updated[currentConversationIndex].restaurants,
+                        sessionId: data.session_id, // Store session_id from backend
                     };
                     return updated;
                 });
@@ -134,14 +164,10 @@ export default function RestaurantFinderPage() {
 
                 setConversations((prev) => {
                     const updated = [...prev];
-                    const targetIndex =
-                        messages.length > 0
-                            ? prev.length - 1
-                            : currentConversationIndex;
-                    updated[targetIndex] = {
-                        ...updated[targetIndex],
+                    updated[currentConversationIndex] = {
+                        ...updated[currentConversationIndex],
                         messages: [
-                            ...updated[targetIndex].messages,
+                            ...updated[currentConversationIndex].messages,
                             errorMessage,
                         ],
                     };
@@ -156,19 +182,23 @@ export default function RestaurantFinderPage() {
 
             setConversations((prev) => {
                 const updated = [...prev];
-                const targetIndex =
-                    messages.length > 0
-                        ? prev.length - 1
-                        : currentConversationIndex;
-                updated[targetIndex] = {
-                    ...updated[targetIndex],
-                    messages: [...updated[targetIndex].messages, errorMessage],
+                updated[currentConversationIndex] = {
+                    ...updated[currentConversationIndex],
+                    messages: [...updated[currentConversationIndex].messages, errorMessage],
                 };
                 return updated;
             });
         } finally {
             setLoading(false);
         }
+    };
+
+    // Create a new conversation (user-initiated)
+    const handleNewConversation = () => {
+        const newConversation = { messages: [], restaurants: [], sessionId: null };
+        setConversations([...conversations, newConversation]);
+        setCurrentConversationIndex(conversations.length);
+        setSelectedRestaurant(null);
     };
 
     const formatPreferences = () => {
@@ -191,6 +221,23 @@ export default function RestaurantFinderPage() {
     const handleNextConversation = () => {
         if (currentConversationIndex < conversations.length - 1) {
             setCurrentConversationIndex(currentConversationIndex + 1);
+            setSelectedRestaurant(null);
+        }
+    };
+
+    const handleDeleteConversation = () => {
+        if (conversations.length === 1) {
+            // If only one conversation, just clear it
+            setConversations([{ messages: [], restaurants: [], sessionId: null }]);
+            setSelectedRestaurant(null);
+        } else {
+            // Remove current conversation
+            const updated = conversations.filter((_, index) => index !== currentConversationIndex);
+            setConversations(updated);
+            // Adjust current index if needed
+            if (currentConversationIndex >= updated.length) {
+                setCurrentConversationIndex(updated.length - 1);
+            }
             setSelectedRestaurant(null);
         }
     };
@@ -224,6 +271,18 @@ export default function RestaurantFinderPage() {
                             🍽️ Restaurant Finder AI
                         </Text>
                     </View>
+                    <View style={styles.headerRight}>
+                        {user && (
+                            <Text variant="bodyMedium" style={styles.userEmail}>
+                                {user.email}
+                            </Text>
+                        )}
+                        <IconButton
+                            icon="logout"
+                            size={24}
+                            onPress={onLogout}
+                        />
+                    </View>
                 </View>
 
                 {/* Preferences Bar */}
@@ -253,7 +312,7 @@ export default function RestaurantFinderPage() {
                                 Map
                             </Text>
                             <GoogleMap
-                                restaurants={restaurants}
+                                restaurants={allRestaurants}
                                 userLocation={userLocation}
                                 onLocationChange={setUserLocation}
                                 selectedRestaurant={selectedRestaurant}
@@ -264,12 +323,28 @@ export default function RestaurantFinderPage() {
                     {/* Right: Chat Interface */}
                     <View style={styles.chatColumn}>
                         <STCard style={styles.chatCard}>
-                            <Text
-                                variant="titleMedium"
-                                style={styles.columnTitle}
-                            >
-                                Chat
-                            </Text>
+                            {/* Chat Header with New Chat and Delete buttons */}
+                            <View style={styles.chatHeader}>
+                                <Text
+                                    variant="titleMedium"
+                                    style={styles.columnTitle}
+                                >
+                                    Chat
+                                </Text>
+                                <View style={styles.chatHeaderButtons}>
+                                    <IconButton
+                                        icon="delete-outline"
+                                        size={24}
+                                        onPress={handleDeleteConversation}
+                                        disabled={loading}
+                                    />
+                                    <IconButton
+                                        icon="plus-circle"
+                                        size={24}
+                                        onPress={handleNewConversation}
+                                    />
+                                </View>
+                            </View>
 
                             {/* Chat Messages Container */}
                             <View style={styles.chatMessagesContainer}>
@@ -303,16 +378,23 @@ export default function RestaurantFinderPage() {
                                         </View>
                                     )}
 
-                                    {messages.map((message, index) => (
-                                        <ChatMessage
-                                            key={index}
-                                            message={message}
-                                            selectedRestaurant={selectedRestaurant}
-                                            onRestaurantClick={(restaurant) => {
-                                                setSelectedRestaurant(restaurant);
-                                            }}
-                                        />
-                                    ))}
+                                    {messages.map((message, index) => {
+                                        // Calculate starting index based on restaurants in previous messages
+                                        const startingIndex = messages
+                                            .slice(0, index)
+                                            .reduce((count, msg) => count + (msg.restaurants?.length || 0), 0);
+                                        return (
+                                            <ChatMessage
+                                                key={index}
+                                                message={message}
+                                                selectedRestaurant={selectedRestaurant}
+                                                onRestaurantClick={(restaurant) => {
+                                                    setSelectedRestaurant(restaurant);
+                                                }}
+                                                startingIndex={startingIndex}
+                                            />
+                                        );
+                                    })}
 
                                     {loading && (
                                         <View style={styles.loadingMessage}>
@@ -411,6 +493,14 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    userEmail: {
+        color: '#5F6368',
+        marginRight: 4,
+    },
     title: {
         fontWeight: '600',
     },
@@ -430,12 +520,14 @@ const styles = StyleSheet.create({
         padding: 16,
         gap: 16,
         overflow: 'hidden',
+        minHeight: 0,
     },
     mapColumn: {
         flex: 1,
     },
     chatColumn: {
         flex: 1,
+        minHeight: 0,
         overflow: 'hidden',
     },
     mapCard: {
@@ -443,16 +535,28 @@ const styles = StyleSheet.create({
         padding: 16,
     },
     chatCard: {
-        height: '100%',
+        flex: 1,
         padding: 16,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        minHeight: 0,
     },
     columnTitle: {
         fontWeight: '600',
-        marginBottom: 12,
+        marginBottom: 0,
         flexShrink: 0,
+    },
+    chatHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+        flexShrink: 0,
+    },
+    chatHeaderButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     chatMessagesContainer: {
         flex: 1,
@@ -464,6 +568,7 @@ const styles = StyleSheet.create({
     },
     chatMessagesContent: {
         flexGrow: 1,
+        paddingBottom: 16,
     },
     emptyState: {
         padding: 24,

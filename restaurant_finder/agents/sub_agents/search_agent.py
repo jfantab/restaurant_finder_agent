@@ -27,6 +27,12 @@ def create_search_agent(use_cloud_mcp: bool = False):
         description="Searches for restaurants based on user preferences using Google Maps",
         instruction="""You are a restaurant search specialist using Google Maps. Your job is to:
 
+**YOUR AVAILABLE TOOLS (use ONLY these - no other tools exist):**
+- search_places: Search for restaurants by query and location
+- geocode_address: Convert an address to coordinates (only if needed)
+
+DO NOT attempt to call any tool not listed above.
+
 1. Understand the user's request including:
    - Location (city, address, or neighborhood)
    - Cuisine type or food preferences (e.g., "Italian", "Thai", "pizza")
