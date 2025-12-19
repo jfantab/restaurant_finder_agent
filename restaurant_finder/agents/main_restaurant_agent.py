@@ -10,13 +10,13 @@ def create_main_restaurant_agent(use_cloud_mcp: bool = False):
     """Creates the main restaurant finder agent.
 
     The agent uses a sequential workflow:
-    1. SearchAgent: Searches for restaurants using Google Maps based on user preferences
-    2. FilterAgent: Filters and ranks results based on detailed information from Google Places
+    1. SearchAgent: Searches for restaurants in the SQL database based on user preferences
+    2. FilterAgent: Filters and ranks results based on detailed information from the database
     3. RecommendationAgent: Presents final recommendations to the user
 
     Args:
-        use_cloud_mcp: If True, uses Cloud Run deployed MCP server.
-                      If False, uses local stdio MCP server.
+        use_cloud_mcp: If True, uses FunctionTools directly.
+                      If False, uses local stdio MCP server for SQL tools.
 
     Returns:
         SequentialAgent: Configured main restaurant finder agent

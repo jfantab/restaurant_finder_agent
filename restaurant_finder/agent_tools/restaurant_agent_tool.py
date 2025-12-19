@@ -1,7 +1,7 @@
 """AgentTool wrapper for the restaurant finder agent."""
 
 from google.adk.tools.agent_tool import AgentTool
-from agents.main_restaurant_agent import create_main_restaurant_agent
+from ..agents.main_restaurant_agent import create_main_restaurant_agent
 
 
 def create_restaurant_agent_tool(

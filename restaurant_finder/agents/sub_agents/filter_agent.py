@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 
 # Use relative import when running as package, absolute when running standalone
 try:
-    from ...google_tools import get_google_places_toolset, get_google_places_function_tools
+    from ...sql_tools import get_sql_toolset, get_sql_tools
 except ImportError:
-    from google_tools import get_google_places_toolset, get_google_places_function_tools
+    from sql_tools import get_sql_toolset, get_sql_tools
 
 
 def after_tool_callback(**kwargs):
@@ -20,17 +20,17 @@ def after_tool_callback(**kwargs):
 
     tool_name = getattr(tool, "name", str(tool)) if tool else "unknown"
 
-    if "get_place_details" in str(tool_name).lower():
+    if "get_restaurant_details" in str(tool_name).lower():
         # Log the response to verify coordinates are being fetched
         if isinstance(tool_response, dict):
             lat = tool_response.get("latitude") or tool_response.get("lat")
             lng = tool_response.get("longitude") or tool_response.get("lng")
             name = tool_response.get("name", "Unknown")
-            logger.info(f"[FilterAgent] get_place_details for '{name}': lat={lat}, lng={lng}")
+            logger.info(f"[FilterAgent] get_restaurant_details for '{name}': lat={lat}, lng={lng}")
             if not lat or not lng:
                 logger.warning(f"[FilterAgent] Missing coordinates for '{name}' - response keys: {list(tool_response.keys())}")
         else:
-            logger.warning(f"[FilterAgent] get_place_details returned non-dict: {type(tool_response)}")
+            logger.warning(f"[FilterAgent] get_restaurant_details returned non-dict: {type(tool_response)}")
 
     return tool_response
 
@@ -44,6 +44,10 @@ def create_filter_agent(use_cloud_mcp: bool = False):
     - Filtering based on user preferences and requirements
     - Ranking restaurants by relevance
 
+    Args:
+        use_cloud_mcp: If True, uses FunctionTools directly.
+                      If False, uses local stdio MCP server.
+
     Returns:
         Agent: Configured filter agent
     """
@@ -54,9 +58,9 @@ def create_filter_agent(use_cloud_mcp: bool = False):
         instruction="""You are a restaurant filtering specialist. Your job is to:
 
 **YOUR AVAILABLE TOOLS (use ONLY these - no other tools exist):**
-- get_place_details: Get detailed info about a restaurant using its Place ID
-- search_places: Search for additional restaurants if needed
-- search_nearby: Find restaurants near coordinates
+- get_restaurant_details: Get detailed info about a restaurant using its Place ID
+- get_restaurant_reviews: Get reviews for a specific restaurant
+- search_restaurants: Search for additional restaurants if needed
 
 DO NOT attempt to call any tool not listed above (e.g., there is NO "recommend_restaurants" tool).
 
@@ -65,10 +69,12 @@ DO NOT attempt to call any tool not listed above (e.g., there is NO "recommend_r
    - Identify the most promising candidates (top 5-8 restaurants)
 
 2. Get detailed information INCLUDING COORDINATES for ALL top candidates:
-   - CRITICAL: Use get_place_details tool for EACH restaurant to get latitude/longitude coordinates
+   - CRITICAL: Use get_restaurant_details tool for EACH restaurant to get latitude/longitude coordinates
    - This is REQUIRED - coordinates are needed to display restaurants on the map
    - Also get phone numbers, websites, and other details
    - Verify location details
+   - IMPORTANT: Use get_restaurant_reviews tool for EACH restaurant to fetch reviews (limit=10)
+   - Reviews are displayed to users as Google review excerpts
 
 3. Filter restaurants based on:
    - User's stated preferences (cuisine, price, location)
@@ -86,17 +92,18 @@ DO NOT attempt to call any tool not listed above (e.g., there is NO "recommend_r
    - Note why each restaurant is a good match
    - Pass complete information so recommendation agent can format properly
 
-IMPORTANT: You MUST call get_place_details for each restaurant you're recommending to ensure
+IMPORTANT: You MUST call get_restaurant_details for each restaurant you're recommending to ensure
 the recommendation agent has coordinates to display restaurants on the map. Without coordinates,
 restaurants cannot be shown on the map!
 
 When passing data to the recommendation agent, format each restaurant with ALL available fields:
 - name, address, phone, website
-- latitude, longitude (CRITICAL - extract from geometry.location in place details)
-- rating (convert to 0-10 scale if needed)
-- price_level (convert to $, $$, $$$, $$$$)
-- opening_hours (is currently open?)
+- latitude, longitude (CRITICAL - from the restaurant details)
+- rating (out of 5)
+- price_level ($, $$, $$$, $$$$)
+- hours (business hours)
+- reviews (up to 10 reviews with author, rating, and text - from get_restaurant_reviews)
 """,
-        tools=get_google_places_function_tools() if use_cloud_mcp else [get_google_places_toolset()],
+        tools=get_sql_tools() if use_cloud_mcp else [get_sql_toolset()],
         after_tool_callback=after_tool_callback,
     )

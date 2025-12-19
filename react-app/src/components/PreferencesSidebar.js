@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
 import { Text, List, Divider, useTheme, Menu, Button, IconButton } from 'react-native-paper';
+import Slider from '@react-native-community/slider';
 import STButton from './STButton';
 
 export default function PreferencesSidebar({ preferences, onPreferencesChange, userLocation, onLocationChange, onClose }) {
@@ -69,6 +70,13 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
     });
   };
 
+  const handleDistanceChange = (value) => {
+    onPreferencesChange({
+      ...preferences,
+      distance: value,
+    });
+  };
+
   const getDietaryDisplayText = () => {
     if (preferences.dietary_restrictions.length === 0) {
       return 'Select Dietary Restrictions';
@@ -129,6 +137,29 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
           >
             Get Current Location
           </STButton>
+        </List.Section>
+
+        <Divider />
+
+        {/* Search Distance */}
+        <List.Section>
+          <List.Subheader>Search Distance</List.Subheader>
+          <View style={styles.sliderContainer}>
+            <Slider
+              style={styles.slider}
+              minimumValue={1}
+              maximumValue={25}
+              step={1}
+              value={preferences.distance || 5}
+              onValueChange={handleDistanceChange}
+              minimumTrackTintColor={theme.colors.primary}
+              maximumTrackTintColor="#E0E0E0"
+              thumbTintColor={theme.colors.primary}
+            />
+            <Text variant="bodyMedium" style={styles.sliderValue}>
+              {preferences.distance || 5} miles
+            </Text>
+          </View>
         </List.Section>
 
         <Divider />
@@ -242,6 +273,7 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
               cuisine: '',
               price_range: '',
               dietary_restrictions: [],
+              distance: 5,
             })}
             style={styles.button}
           >
@@ -302,6 +334,19 @@ const styles = StyleSheet.create({
   dropdownButtonContent: {
     flexDirection: 'row-reverse',
     justifyContent: 'space-between',
+  },
+  sliderContainer: {
+    paddingHorizontal: 16,
+    marginVertical: 8,
+  },
+  slider: {
+    width: '100%',
+    height: 40,
+  },
+  sliderValue: {
+    textAlign: 'center',
+    color: '#333',
+    fontWeight: '500',
   },
   priceContainer: {
     flexDirection: 'row',

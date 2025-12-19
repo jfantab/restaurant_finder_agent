@@ -6,3 +6,5 @@ requests
 PyJWT>=2.8.0
 cryptography>=41.0.0
 streamlit>=1.28.0
+psycopg2-binary>=2.9.9
+google-maps-places>=0.4.0

@@ -1,7 +1,7 @@
 """Router agent that coordinates restaurant finder requests."""
 
 from google.adk.agents import Agent
-from agent_tools.restaurant_agent_tool import create_restaurant_agent_tool
+from ..agent_tools.restaurant_agent_tool import create_restaurant_agent_tool
 
 
 def after_tool_callback(**kwargs):

@@ -1,13 +1,12 @@
 """Search agent for finding restaurants."""
 
-import os
 from google.adk.agents import Agent
 
 # Use relative import when running as package, absolute when running standalone
 try:
-    from ...google_tools import get_google_places_toolset, get_google_places_function_tools
+    from ...sql_tools import get_sql_tools, get_sql_toolset
 except ImportError:
-    from google_tools import get_google_places_toolset, get_google_places_function_tools
+    from sql_tools import get_sql_tools, get_sql_toolset
 
 
 def create_search_agent(use_cloud_mcp: bool = False):
@@ -15,56 +14,77 @@ def create_search_agent(use_cloud_mcp: bool = False):
 
     This agent is responsible for:
     - Parsing user's location and food preferences
-    - Searching for relevant restaurants using Apple Maps
+    - Searching for relevant restaurants in the database
     - Extracting key information from search results
+
+    Args:
+        use_cloud_mcp: If True, uses FunctionTools directly.
+                      If False, uses local stdio MCP server.
 
     Returns:
         Agent: Configured search agent
     """
+    # Get SQL tools - either as FunctionTools or via MCP
+    tools = get_sql_tools() if use_cloud_mcp else [get_sql_toolset()]
+
     return Agent(
         name="RestaurantSearchAgent",
         model="gemini-2.5-flash",
-        description="Searches for restaurants based on user preferences using Google Maps",
-        instruction="""You are a restaurant search specialist using Google Maps. Your job is to:
+        description="Searches for restaurants based on user preferences using the database",
+        instruction="""You are a restaurant search specialist. Your job is to find restaurants from our database based on user preferences.
 
 **YOUR AVAILABLE TOOLS (use ONLY these - no other tools exist):**
-- search_places: Search for restaurants by query and location
-- geocode_address: Convert an address to coordinates (only if needed)
+- search_restaurants: Search for restaurants by location (lat/lng) and distance
+- get_restaurant_reviews: Get reviews for a specific restaurant
+- get_restaurant_details: Get detailed info about a restaurant
 
 DO NOT attempt to call any tool not listed above.
 
-1. Understand the user's request including:
-   - Location (city, address, or neighborhood)
+## How to Search for Restaurants:
+
+1. **Understand the user's request:**
+   - Location (city, address, neighborhood, or "near me" with coordinates)
    - Cuisine type or food preferences (e.g., "Italian", "Thai", "pizza")
-   - Price range if mentioned (budget/cheap, moderate, expensive)
-   - Any specific requirements (outdoor seating, delivery, etc.)
+   - Distance preference (default: 5 miles)
+   - Minimum rating if mentioned
 
-2. Use ONLY the search_places tool to find restaurants:
-   - Construct natural language queries like "Thai restaurants in Queens NY" or "pizza near Central Park"
-   - Include both the cuisine type AND location in your query
-   - Request an appropriate number of results (default 10, max 20)
-   - Example query formats:
-     * "[cuisine] restaurants in [location]"
-     * "[food type] near [landmark/address]"
-     * "[restaurant type] in [neighborhood/city]"
+2. **Determine coordinates:**
+   - If the user provides coordinates directly, use them
+   - If the user mentions a general location like "San Jose" or "downtown", use these default coordinates:
+     - San Jose downtown: latitude=37.3382, longitude=-121.8863
+     - San Jose: latitude=37.3382, longitude=-121.8863
+   - If the user says "near me" without coordinates, ask them to provide their location
 
-3. Return the search results as-is from search_places:
-   - DO NOT call any other tools after getting search results
-   - DO NOT try to get additional details about restaurants
-   - The next agent will handle getting detailed information
-   - Simply pass along what search_places returns
+3. **Use search_restaurants to find restaurants:**
+   - Provide latitude and longitude (required)
+   - Optionally filter by cuisine type
+   - Optionally filter by minimum rating
+   - Default radius is 5 miles
+   - Example call:
+     ```
+     search_restaurants(
+         latitude=37.3382,
+         longitude=-121.8863,
+         radius_miles=5.0,
+         cuisine="Thai",
+         limit=10
+     )
+     ```
 
-4. If the location is ambiguous, ask for clarification.
+4. **Return the search results as-is:**
+   - DO NOT call get_restaurant_reviews during search
+   - The next agent will handle getting detailed reviews
+   - Simply pass along what search_restaurants returns
 
-5. If no results are found, try:
-   - Broadening the search area
-   - Using more general cuisine terms
-   - Suggesting alternative cuisines
+5. **If no results are found, try:**
+   - Increasing the search radius
+   - Removing the cuisine filter
+   - Suggesting the user try a different location
 
-6. You can use geocode_address ONLY if the user provides an address that needs to be converted to a location for searching.
-
-IMPORTANT: Your role is ONLY to search. Do NOT attempt to get detailed information about individual restaurants.
-The filter agent will handle that in the next step.
+## Important Notes:
+- The database contains restaurants in the San Jose area
+- Results include: name, address, rating, distance, phone, website, and coordinates
+- Your role is ONLY to search. The filter agent will handle reviews and details.
 """,
-        tools=get_google_places_function_tools() if use_cloud_mcp else [get_google_places_toolset()],
+        tools=tools,
     )

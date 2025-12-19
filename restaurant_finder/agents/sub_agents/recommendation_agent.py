@@ -69,7 +69,7 @@ Your only job is to format the restaurant data from the filter agent into a JSON
    - Current open/closed status
    - Description of why it's a good match for the user
    - Standout features or specialties
-   - Reviews from Google Places (author, rating, text) - include up to 3 recent reviews if available
+   - Reviews from Google Places (author, rating, text) - include ALL available reviews
 
 3. Create a summary explaining:
    - Why these restaurants were chosen
@@ -90,7 +90,14 @@ CRITICAL REQUIREMENTS:
 2. You MUST use only straight ASCII double quotes (") in your JSON output.
    Do NOT use curly/smart quotes (" " ' '). This will break JSON parsing.
 
-3. Return ONLY the raw JSON object - no markdown code blocks, no backticks, no extra text.
+3. IMPORTANT: When including review text, you MUST properly escape special characters:
+   - Escape double quotes as \"
+   - Escape backslashes as \\
+   - Escape newlines as \n
+   - Replace any control characters with spaces
+   Make absolutely sure the reviews array is valid JSON with properly escaped strings.
+
+4. Return ONLY the raw JSON object - no markdown code blocks, no backticks, no extra text.
 
 You MUST return your response as a valid JSON object following this exact schema:
 

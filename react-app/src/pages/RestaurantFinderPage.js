@@ -59,6 +59,7 @@ export default function RestaurantFinderPage({ user, onLogout }) {
         cuisine: '',
         price_range: '',
         dietary_restrictions: [],
+        distance: 5,
     });
     const [sidebarVisible, setSidebarVisible] = useState(true);
     const [selectedRestaurant, setSelectedRestaurant] = useState(null);
