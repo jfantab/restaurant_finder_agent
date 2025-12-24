@@ -41,6 +41,8 @@ def search_restaurants(
     try:
         db = get_db_connection()
 
+        print(f"[DEBUG search_restaurants] Searching with lat={latitude}, lng={longitude}, radius={radius_miles} miles")
+
         # Haversine formula in SQL to calculate distance in miles
         # 3959 is Earth's radius in miles
         haversine_sql = f"""

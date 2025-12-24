@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
-import { Text, List, Divider, useTheme, Menu, Button, IconButton } from 'react-native-paper';
+import { Text, List, Divider, useTheme, Menu, Button, IconButton, Switch } from 'react-native-paper';
 import Slider from '@react-native-community/slider';
 import STButton from './STButton';
 
@@ -265,6 +265,32 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
 
         <Divider />
 
+        {/* Voice Mode */}
+        <List.Section>
+          <List.Subheader>Voice Mode</List.Subheader>
+          <View style={styles.switchContainer}>
+            <View style={styles.switchLabelContainer}>
+              <Text variant="bodyMedium" style={styles.switchLabel}>
+                Enable Voice Responses
+              </Text>
+              <Text variant="bodySmall" style={styles.switchDescription}>
+                Agent will speak out response summaries
+              </Text>
+            </View>
+            <Switch
+              value={preferences.voiceMode || false}
+              onValueChange={(value) => {
+                onPreferencesChange({
+                  ...preferences,
+                  voiceMode: value,
+                });
+              }}
+            />
+          </View>
+        </List.Section>
+
+        <Divider />
+
         {/* Clear Preferences */}
         <View style={styles.clearContainer}>
           <STButton
@@ -274,6 +300,7 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
               price_range: '',
               dietary_restrictions: [],
               distance: 5,
+              voiceMode: false,
             })}
             style={styles.button}
           >
@@ -355,6 +382,26 @@ const styles = StyleSheet.create({
   },
   priceButton: {
     flex: 1,
+  },
+  switchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  switchLabelContainer: {
+    flex: 1,
+    marginRight: 16,
+  },
+  switchLabel: {
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  switchDescription: {
+    color: '#666',
+    lineHeight: 16,
   },
   clearContainer: {
     paddingVertical: 16,

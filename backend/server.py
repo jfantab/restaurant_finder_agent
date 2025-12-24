@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import asyncio
+import time
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -19,6 +20,10 @@ load_dotenv()
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React Native web app
+
+# Session-based filter state storage
+session_filter_states = {}  # {session_id: FilterState}
+session_timestamps = {}     # {session_id: timestamp} for cleanup
 
 # Configuration
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
@@ -91,6 +96,20 @@ else:
     agent = deployed_agent
     print(f"Connected to deployed agent: {deployed_agent.resource_name}")
 
+def cleanup_old_sessions():
+    """Remove sessions older than 1 hour."""
+    current_time = time.time()
+    expired = [sid for sid, ts in session_timestamps.items()
+               if current_time - ts > 3600]
+    for sid in expired:
+        if sid in session_filter_states:
+            del session_filter_states[sid]
+        if sid in session_timestamps:
+            del session_timestamps[sid]
+    if expired:
+        print(f"[DEBUG] Cleaned up {len(expired)} expired sessions")
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
@@ -117,17 +136,54 @@ def search_restaurants():
     }
     """
     try:
+        # Import FilterState here to avoid circular imports
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from restaurant_finder.models.filter_state import FilterState
+
+        # Clean up old sessions
+        cleanup_old_sessions()
+
         data = request.json
         query = data.get('query', '')
         location = data.get('location')
         preferences = data.get('preferences', {})
         session_id = data.get('session_id')  # Client provides session_id for follow-ups
 
-        # Build context with preferences
+        # Get or create filter state for this session
+        if session_id and session_id in session_filter_states:
+            filter_state = session_filter_states[session_id]
+            print(f"[DEBUG] Loaded existing filter state for session {session_id}: {filter_state.get_filter_summary()}")
+        else:
+            # Initialize from preferences and location
+            filter_state = FilterState(
+                latitude=location.get('lat') if location else None,
+                longitude=location.get('lng') if location else None,
+                location_name=preferences.get('location_name', 'Current location'),
+                cuisine=preferences.get('cuisine'),
+                radius_miles=preferences.get('distance', 5.0),
+                dietary_restrictions=preferences.get('dietary_restrictions', []),
+            )
+
+            # Map price_range to max_price_level
+            price_map = {'$': 1, '$$': 2, '$$$': 3, '$$$$': 4}
+            if preferences.get('price_range'):
+                filter_state.max_price_level = price_map.get(preferences['price_range'])
+
+            print(f"[DEBUG] Created new filter state: {filter_state.get_filter_summary()}")
+
+        # Build context with filter state
         context_parts = []
 
-        if location:
-            context_parts.append(f"Current location: latitude {location['lat']}, longitude {location['lng']}")
+        # ALWAYS include location coordinates first (most important for search)
+        if filter_state.latitude and filter_state.longitude:
+            context_parts.append(f"User location: latitude {filter_state.latitude}, longitude {filter_state.longitude}")
+        elif location:
+            context_parts.append(f"User location: latitude {location['lat']}, longitude {location['lng']}")
+
+        # Include filter state summary if filters are active
+        filter_summary = filter_state.get_filter_summary()
+        if filter_summary != "No filters":
+            context_parts.append(f"Current filter state: {filter_summary}")
 
         if preferences.get('cuisine'):
             context_parts.append(f"Preferred cuisine: {preferences['cuisine']}")
@@ -143,6 +199,9 @@ def search_restaurants():
 
         context = "\n".join(context_parts) if context_parts else ""
         full_prompt = f"{context}\n\nUser request: {query}" if context else query
+
+        print(f"[DEBUG] Full prompt being sent to agent:")
+        print(f"[DEBUG] {full_prompt}")
 
         if run_local:
             # Local mode: Use the Runner to execute the agent
@@ -164,11 +223,27 @@ def search_restaurants():
         print(f"[DEBUG] Extracted {len(restaurants) if restaurants else 0} restaurants")
         print(f"[DEBUG] Summary: {summary[:100] if summary else 'None'}...")
 
+        # Store filter state and update timestamp
+        if used_session_id:
+            session_filter_states[used_session_id] = filter_state
+            session_timestamps[used_session_id] = time.time()
+
         return jsonify({
             "success": True,
             "response": summary or response_text,
             "restaurants": restaurants,
-            "session_id": used_session_id  # Return session_id for client to use in follow-ups
+            "session_id": used_session_id,  # Return session_id for client to use in follow-ups
+            "filter_state": {
+                "summary": filter_state.get_filter_summary(),
+                "filters": {
+                    "cuisine": filter_state.cuisine,
+                    "price_level": filter_state.max_price_level,
+                    "rating": filter_state.min_rating,
+                    "distance": filter_state.radius_miles,
+                    "dietary": filter_state.dietary_restrictions,
+                    "sort_by": filter_state.sort_by,
+                }
+            }
         })
 
     except Exception as e:
@@ -511,9 +586,13 @@ def extract_restaurants_from_response(response_text):
                                     json_text = response_text[start_idx:i+1]
                                     break
                     else:
-                        json_text = response_text
+                        # No matching closing brace found, this is plain text
+                        print("[DEBUG] No matching closing brace found, treating as plain text response")
+                        return None
                 else:
-                    json_text = response_text
+                    # No JSON object found at all, this is plain text
+                    print("[DEBUG] No JSON object found, treating as plain text response")
+                    return None
 
             # Parse the extracted JSON (use strict=False to handle control characters)
             try:
@@ -527,7 +606,9 @@ def extract_restaurants_from_response(response_text):
                 with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
                     f.write(json_text)
                     print(f"[DEBUG] Full JSON saved to: {f.name}")
-                raise
+                # This is plain text, not JSON - return None gracefully
+                print("[DEBUG] Returning None for plain text response")
+                return None
 
         # Handle nested router response: {"restaurant_finder_response": {"result": "<JSON string>"}}
         if isinstance(data, dict) and 'restaurant_finder_response' in data:
