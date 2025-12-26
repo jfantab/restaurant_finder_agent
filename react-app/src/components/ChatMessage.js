@@ -7,6 +7,7 @@ export default function ChatMessage({
     onRestaurantClick,
     selectedRestaurant,
     startingIndex = 0,
+    hideMessageText = false,
 }) {
     const theme = useTheme();
     const isUser = message.role === 'user';
@@ -72,35 +73,39 @@ export default function ChatMessage({
             ]}
         >
             {/* Summary text message */}
-            <Card
-                style={[
-                    styles.messageCard,
-                    isUser
-                        ? { backgroundColor: theme.colors.primary }
-                        : { backgroundColor: theme.colors.surface },
-                ]}
-                elevation={1}
-            >
-                <Card.Content>
-                    <Text
-                        variant="bodyMedium"
-                        style={[
-                            styles.messageText,
-                            isUser && { color: '#FFFFFF' },
-                        ]}
-                    >
-                        {message.content}
-                    </Text>
-                </Card.Content>
-            </Card>
+            {!hideMessageText && (
+                <Card
+                    style={[
+                        styles.messageCard,
+                        isUser
+                            ? { backgroundColor: theme.colors.primary }
+                            : { backgroundColor: theme.colors.surface },
+                    ]}
+                    elevation={1}
+                >
+                    <Card.Content>
+                        <Text
+                            variant="bodyMedium"
+                            style={[
+                                styles.messageText,
+                                isUser && { color: '#FFFFFF' },
+                            ]}
+                        >
+                            {message.content}
+                        </Text>
+                    </Card.Content>
+                </Card>
+            )}
 
             {/* Display restaurant cards below if available */}
             {!isUser && restaurants && restaurants.length > 0 && (
                 <View style={styles.restaurantsContainer}>
-                    <Text variant="titleMedium" style={styles.restaurantsTitle}>
-                        Found {restaurants.length} restaurant
-                        {restaurants.length !== 1 ? 's' : ''}:
-                    </Text>
+                    {!hideMessageText && (
+                        <Text variant="titleMedium" style={styles.restaurantsTitle}>
+                            Found {restaurants.length} restaurant
+                            {restaurants.length !== 1 ? 's' : ''}:
+                        </Text>
+                    )}
 
                     {restaurants.map((restaurant, index) => (
                         <Card

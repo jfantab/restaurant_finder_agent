@@ -55,13 +55,9 @@ if run_local:
     # Initialize environment and Vertex AI
     setup_environment()
 
-    # use_cloud_mcp=False means use local stdio MCP server for SQL tools
-    # use_cloud_mcp=True means use FunctionTools directly (no MCP)
-    use_cloud_mcp = os.getenv("USE_CLOUD_MCP", "false").lower() == "true"
-
     # Create the local agent (router agent handles routing and follow-ups)
-    # Uses SQL tools via stdio MCP server for local mode
-    local_agent = create_router_agent(use_cloud_mcp=use_cloud_mcp)
+    # Always uses SQL tools via stdio MCP server for local mode
+    local_agent = create_router_agent(use_cloud_mcp=False)
 
     # Create session service and runner
     session_service = InMemorySessionService()
@@ -72,7 +68,7 @@ if run_local:
     )
 
     print(f"Local agent initialized: {local_agent.name}")
-    print(f"  - Using {'FunctionTools' if use_cloud_mcp else 'stdio MCP'} for SQL tools")
+    print(f"  - Using stdio MCP for SQL tools")
 else:
     # Cloud mode: Connect to deployed Vertex AI agent
     print("Starting in CLOUD mode...")

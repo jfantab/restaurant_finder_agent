@@ -73,6 +73,7 @@ export default function RestaurantFinderPage({ user, onLogout }) {
         dietary: [],
         sort_by: null,
     });
+    const [rightViewMode, setRightViewMode] = useState('chat'); // 'chat' or 'restaurants'
     const scrollViewRef = useRef(null);
 
     // Voice recording states
@@ -89,14 +90,20 @@ export default function RestaurantFinderPage({ user, onLogout }) {
     const currentConversation = conversations[currentConversationIndex];
     const messages = currentConversation.messages;
 
-    // Collect ALL restaurants from ALL messages in the conversation (for map display)
-    // This ensures map markers show cumulative results (1,2,3... then 6,7,8... etc)
-    const allRestaurants = messages.reduce((acc, msg) => {
-        if (msg.restaurants && msg.restaurants.length > 0) {
-            return [...acc, ...msg.restaurants];
+    // Get the most recent restaurants (from the last assistant message with restaurants)
+    // This shows only the current filtered results, not cumulative
+    const currentRestaurants = (() => {
+        // Find the last message with restaurants (most recent search results)
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].restaurants && messages[i].restaurants.length > 0) {
+                return messages[i].restaurants;
+            }
         }
-        return acc;
-    }, []);
+        return [];
+    })();
+
+    // For map display, use current restaurants (or all if you prefer cumulative map markers)
+    const allRestaurants = currentRestaurants;
 
     // Save conversations to localStorage whenever they change
     useEffect(() => {
@@ -302,6 +309,11 @@ export default function RestaurantFinderPage({ user, onLogout }) {
                     });
                 }
 
+                // Auto-switch to restaurants tab when new restaurants are found
+                if (data.restaurants && data.restaurants.length > 0) {
+                    setRightViewMode('restaurants');
+                }
+
                 // Play response as voice if voice mode is enabled
                 if (preferences.voiceMode && data.response) {
                     await playTextAsVoice(data.response);
@@ -349,6 +361,8 @@ export default function RestaurantFinderPage({ user, onLogout }) {
         setConversations([...conversations, newConversation]);
         setCurrentConversationIndex(conversations.length);
         setSelectedRestaurant(null);
+        // Switch to chat tab for new conversation
+        setRightViewMode('chat');
     };
 
     const formatPreferences = () => {
@@ -575,31 +589,51 @@ export default function RestaurantFinderPage({ user, onLogout }) {
 
                     {/* Right: Chat Interface */}
                     <View style={styles.chatColumn}>
-                        <STCard style={styles.chatCard}>
-                            {/* Chat Header with New Chat and Delete buttons */}
-                            <View style={styles.chatHeader}>
-                                <Text
-                                    variant="titleMedium"
-                                    style={styles.columnTitle}
-                                >
-                                    Chat
-                                </Text>
-                                <View style={styles.chatHeaderButtons}>
-                                    <IconButton
-                                        icon="delete-outline"
-                                        size={24}
-                                        onPress={handleDeleteConversation}
-                                        disabled={loading}
-                                    />
-                                    <IconButton
-                                        icon="plus-circle"
-                                        size={24}
-                                        onPress={handleNewConversation}
-                                    />
-                                </View>
-                            </View>
+                        {/* View Toggle Buttons */}
+                        <View style={styles.viewToggle}>
+                            <STButton
+                                mode={rightViewMode === 'chat' ? 'contained' : 'outlined'}
+                                onPress={() => setRightViewMode('chat')}
+                                style={styles.toggleButton}
+                                icon="message-text"
+                            >
+                                Chat
+                            </STButton>
+                            <STButton
+                                mode={rightViewMode === 'restaurants' ? 'contained' : 'outlined'}
+                                onPress={() => setRightViewMode('restaurants')}
+                                style={styles.toggleButton}
+                                icon="silverware-fork-knife"
+                            >
+                                Restaurants ({currentRestaurants.length})
+                            </STButton>
+                        </View>
 
-                            {/* Chat Messages Container */}
+                        {/* Chat Messages Section */}
+                        {rightViewMode === 'chat' && (
+                            <STCard style={styles.messagesCard}>
+                                <View style={styles.chatHeader}>
+                                    <Text
+                                        variant="titleMedium"
+                                        style={styles.columnTitle}
+                                    >
+                                        Messages
+                                    </Text>
+                                    <View style={styles.chatHeaderButtons}>
+                                        <IconButton
+                                            icon="delete-outline"
+                                            size={24}
+                                            onPress={handleDeleteConversation}
+                                            disabled={loading}
+                                        />
+                                        <IconButton
+                                            icon="plus-circle"
+                                            size={24}
+                                            onPress={handleNewConversation}
+                                        />
+                                    </View>
+                                </View>
+
                             <View style={styles.chatMessagesContainer}>
                                 <ScrollView
                                     ref={scrollViewRef}
@@ -632,20 +666,34 @@ export default function RestaurantFinderPage({ user, onLogout }) {
                                     )}
 
                                     {messages.map((message, index) => {
-                                        // Calculate starting index based on restaurants in previous messages
-                                        const startingIndex = messages
-                                            .slice(0, index)
-                                            .reduce((count, msg) => count + (msg.restaurants?.length || 0), 0);
+                                        // In chat view, hide restaurant cards - just show text
+                                        const messageWithoutRestaurants = {
+                                            ...message,
+                                            restaurants: []
+                                        };
+
+                                        // Show "View Restaurants" button after assistant messages that had restaurants
+                                        const hasRestaurants = message.restaurants && message.restaurants.length > 0;
+                                        const isUser = message.role === 'user';
+
                                         return (
-                                            <ChatMessage
-                                                key={index}
-                                                message={message}
-                                                selectedRestaurant={selectedRestaurant}
-                                                onRestaurantClick={(restaurant) => {
-                                                    setSelectedRestaurant(restaurant);
-                                                }}
-                                                startingIndex={startingIndex}
-                                            />
+                                            <View key={index}>
+                                                <ChatMessage
+                                                    message={messageWithoutRestaurants}
+                                                />
+                                                {hasRestaurants && !isUser && (
+                                                    <View style={styles.viewRestaurantsButtonContainer}>
+                                                        <STButton
+                                                            mode="outlined"
+                                                            icon="silverware-fork-knife"
+                                                            onPress={() => setRightViewMode('restaurants')}
+                                                            style={styles.viewRestaurantsButton}
+                                                        >
+                                                            View {message.restaurants.length} Restaurant{message.restaurants.length !== 1 ? 's' : ''}
+                                                        </STButton>
+                                                    </View>
+                                                )}
+                                            </View>
                                         );
                                     })}
 
@@ -663,87 +711,139 @@ export default function RestaurantFinderPage({ user, onLogout }) {
                                 </ScrollView>
                             </View>
 
-                            {/* Voice Playback Indicator */}
-                            {isPlayingAudio && (
-                                <View style={styles.voicePlaybackIndicator}>
-                                    <ActivityIndicator size="small" color="#007AFF" />
-                                    <Text variant="bodyMedium" style={styles.voicePlaybackText}>
-                                        Speaking response...
-                                    </Text>
-                                    <IconButton
-                                        icon="stop"
-                                        size={20}
-                                        onPress={stopAudioPlayback}
-                                        iconColor="#FF3B30"
-                                    />
-                                </View>
-                            )}
-
-                            {/* Chat Input */}
-                            <View style={styles.chatInput}>
-                                <View style={styles.inputRow}>
-                                    {Platform.OS === 'web' && (
+                                {/* Conversation Navigation */}
+                                {conversations.length > 1 && (
+                                    <View style={styles.conversationNav}>
                                         <IconButton
-                                            icon={isRecording ? 'stop' : 'microphone'}
+                                            icon="chevron-left"
                                             size={24}
-                                            onPress={isRecording ? stopRecording : startRecording}
-                                            disabled={loading || isProcessingVoice}
-                                            iconColor={isRecording ? '#FF3B30' : '#007AFF'}
-                                            style={styles.micButton}
+                                            onPress={handlePreviousConversation}
+                                            disabled={
+                                                currentConversationIndex === 0
+                                            }
                                         />
-                                    )}
-                                    <TextInput
-                                        mode="outlined"
-                                        placeholder={isProcessingVoice ? 'Processing voice...' : 'What kind of restaurant are you looking for?'}
-                                        value={inputText}
-                                        onChangeText={setInputText}
-                                        onSubmitEditing={handleSend}
-                                        style={styles.input}
-                                        disabled={loading || isProcessingVoice}
-                                        right={
-                                            <TextInput.Icon
-                                                icon="send"
-                                                onPress={handleSend}
-                                                disabled={
-                                                    loading || !inputText.trim() || isProcessingVoice
-                                                }
-                                            />
-                                        }
-                                    />
-                                </View>
-                            </View>
+                                        <Text
+                                            variant="bodyMedium"
+                                            style={styles.conversationCounter}
+                                        >
+                                            Conversation{' '}
+                                            {currentConversationIndex + 1} of{' '}
+                                            {conversations.length}
+                                        </Text>
+                                        <IconButton
+                                            icon="chevron-right"
+                                            size={24}
+                                            onPress={handleNextConversation}
+                                            disabled={
+                                                currentConversationIndex ===
+                                                conversations.length - 1
+                                            }
+                                        />
+                                    </View>
+                                )}
+                            </STCard>
+                        )}
 
-                            {/* Conversation Navigation */}
-                            {conversations.length > 1 && (
-                                <View style={styles.conversationNav}>
+                        {/* Restaurant Recommendations Section */}
+                        {rightViewMode === 'restaurants' && (
+                            <STCard style={styles.restaurantsCard}>
+                            <Text
+                                variant="titleMedium"
+                                style={styles.columnTitle}
+                            >
+                                Restaurant Recommendations
+                            </Text>
+
+                            <ScrollView
+                                style={styles.restaurantsList}
+                                contentContainerStyle={styles.restaurantsListContent}
+                            >
+                                {currentRestaurants.length === 0 ? (
+                                    <View style={styles.emptyRestaurants}>
+                                        <Text
+                                            variant="bodyMedium"
+                                            style={styles.emptyRestaurantsText}
+                                        >
+                                            No restaurants to display yet. Start searching!
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <View>
+                                        <Text variant="bodyMedium" style={styles.restaurantsCount}>
+                                            Found {currentRestaurants.length} restaurant
+                                            {currentRestaurants.length !== 1 ? 's' : ''}:
+                                        </Text>
+                                        {currentRestaurants.map((restaurant, index) => (
+                                            <ChatMessage
+                                                key={index}
+                                                message={{
+                                                    role: 'assistant',
+                                                    content: '',
+                                                    restaurants: [restaurant]
+                                                }}
+                                                selectedRestaurant={selectedRestaurant}
+                                                onRestaurantClick={(restaurant) => {
+                                                    setSelectedRestaurant(restaurant);
+                                                }}
+                                                startingIndex={index}
+                                                hideMessageText={true}
+                                            />
+                                        ))}
+                                    </View>
+                                )}
+                            </ScrollView>
+                            </STCard>
+                        )}
+
+                        {/* Voice Playback Indicator */}
+                        {isPlayingAudio && (
+                            <View style={styles.voicePlaybackIndicator}>
+                                <ActivityIndicator size="small" color="#007AFF" />
+                                <Text variant="bodyMedium" style={styles.voicePlaybackText}>
+                                    Speaking response...
+                                </Text>
+                                <IconButton
+                                    icon="stop"
+                                    size={20}
+                                    onPress={stopAudioPlayback}
+                                    iconColor="#FF3B30"
+                                />
+                            </View>
+                        )}
+
+                        {/* Chat Input - Always visible at bottom */}
+                        <View style={styles.chatInputContainer}>
+                            <View style={styles.inputRow}>
+                                {Platform.OS === 'web' && (
                                     <IconButton
-                                        icon="chevron-left"
+                                        icon={isRecording ? 'stop' : 'microphone'}
                                         size={24}
-                                        onPress={handlePreviousConversation}
-                                        disabled={
-                                            currentConversationIndex === 0
-                                        }
+                                        onPress={isRecording ? stopRecording : startRecording}
+                                        disabled={loading || isProcessingVoice}
+                                        iconColor={isRecording ? '#FF3B30' : '#007AFF'}
+                                        style={styles.micButton}
                                     />
-                                    <Text
-                                        variant="bodyMedium"
-                                        style={styles.conversationCounter}
-                                    >
-                                        Conversation{' '}
-                                        {currentConversationIndex + 1} of{' '}
-                                        {conversations.length}
-                                    </Text>
-                                    <IconButton
-                                        icon="chevron-right"
-                                        size={24}
-                                        onPress={handleNextConversation}
-                                        disabled={
-                                            currentConversationIndex ===
-                                            conversations.length - 1
-                                        }
-                                    />
-                                </View>
-                            )}
-                        </STCard>
+                                )}
+                                <TextInput
+                                    mode="outlined"
+                                    placeholder={isProcessingVoice ? 'Processing voice...' : 'What kind of restaurant are you looking for?'}
+                                    value={inputText}
+                                    onChangeText={setInputText}
+                                    onSubmitEditing={handleSend}
+                                    style={styles.input}
+                                    disabled={loading || isProcessingVoice}
+                                    right={
+                                        <TextInput.Icon
+                                            icon="send"
+                                            onPress={handleSend}
+                                            disabled={
+                                                loading || !inputText.trim() || isProcessingVoice
+                                            }
+                                        />
+                                    }
+                                />
+                            </View>
+                        </View>
                     </View>
                 </View>
             </View>
@@ -831,12 +931,31 @@ const styles = StyleSheet.create({
         flex: 1,
         minHeight: 0,
         overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 16,
+    },
+    viewToggle: {
+        flexDirection: 'row',
+        gap: 12,
+        flexShrink: 0,
+    },
+    toggleButton: {
+        flex: 1,
     },
     mapCard: {
         height: '100%',
         padding: 16,
     },
-    chatCard: {
+    messagesCard: {
+        flex: 1,
+        padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        minHeight: 0,
+    },
+    restaurantsCard: {
         flex: 1,
         padding: 16,
         display: 'flex',
@@ -871,6 +990,14 @@ const styles = StyleSheet.create({
     chatMessagesContent: {
         flexGrow: 1,
         paddingBottom: 16,
+    },
+    viewRestaurantsButtonContainer: {
+        paddingHorizontal: 8,
+        paddingVertical: 8,
+        alignItems: 'flex-start',
+    },
+    viewRestaurantsButton: {
+        borderColor: '#1A73E8',
     },
     emptyState: {
         padding: 24,
@@ -910,11 +1037,35 @@ const styles = StyleSheet.create({
         color: '#1976D2',
         fontWeight: '500',
     },
-    chatInput: {
+    restaurantsList: {
+        flex: 1,
+        marginTop: 12,
+    },
+    restaurantsListContent: {
+        paddingBottom: 16,
+    },
+    emptyRestaurants: {
+        padding: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    emptyRestaurantsText: {
+        textAlign: 'center',
+        color: '#5F6368',
+    },
+    restaurantsCount: {
+        fontWeight: '600',
+        marginBottom: 12,
+        fontSize: 16,
+        paddingHorizontal: 8,
+    },
+    chatInputContainer: {
         flexShrink: 0,
+        backgroundColor: '#FFFFFF',
         borderTopWidth: 1,
         borderTopColor: '#E6E9EF',
-        paddingTop: 12,
+        padding: 12,
+        borderRadius: 8,
     },
     inputRow: {
         flexDirection: 'row',

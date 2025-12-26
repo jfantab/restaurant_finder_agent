@@ -144,3 +144,6 @@ temp/
 # Streamlit
 .streamlit/secrets.toml
 .vercel
+
+# Data directory
+restaurant_finder/data/*

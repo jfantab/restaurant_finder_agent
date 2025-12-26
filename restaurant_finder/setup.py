@@ -24,32 +24,11 @@ def setup_environment():
 
     PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
     LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION")
-    USE_CLOUD_MCP = os.getenv("USE_CLOUD_MCP", "").lower() == "true"
-    GOOGLE_PLACES_MCP_URL = os.getenv("GOOGLE_PLACES_MCP_URL")
 
     if not PROJECT_ID:
         raise ValueError("⚠️ GOOGLE_CLOUD_PROJECT not found in environment variables")
     if not LOCATION:
         raise ValueError("⚠️ GOOGLE_CLOUD_LOCATION not found in environment variables")
-
-    # Check credentials based on MCP mode
-    if USE_CLOUD_MCP:
-        if not GOOGLE_PLACES_MCP_URL:
-            raise ValueError(
-                "⚠️ USE_CLOUD_MCP is true but GOOGLE_PLACES_MCP_URL not set.\n"
-                "Set GOOGLE_PLACES_MCP_URL to your Cloud Run service URL"
-            )
-        print(f"✅ Using Cloud Run MCP server: {GOOGLE_PLACES_MCP_URL}")
-    else:
-        GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
-
-        if not GOOGLE_PLACES_API_KEY:
-            raise ValueError(
-                "⚠️ Google Places API key not found in environment variables.\n"
-                "Required: GOOGLE_PLACES_API_KEY\n"
-                "Get it at https://console.cloud.google.com/apis/credentials"
-            )
-        print(f"✅ Google Places API key configured (local MCP)")
 
     if PROJECT_ID == "your-project-id":
         raise ValueError("⚠️ Please replace 'your-project-id' with your actual Google Cloud Project ID.")
