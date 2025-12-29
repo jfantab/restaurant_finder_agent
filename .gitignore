@@ -147,3 +147,14 @@ temp/
 
 # Data directory
 restaurant_finder/data/*
+
+# Data files (CSV, backups)
+data/raw/*.csv
+data/processed/*.csv
+data/backups/*.backup
+*.backup
+
+
+
+scripts
+data
