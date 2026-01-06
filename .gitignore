@@ -147,3 +147,5 @@ temp/
 
 # Data directory
 restaurant_finder/data/*
+scripts/
+data/
