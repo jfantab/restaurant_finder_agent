@@ -2,9 +2,9 @@
 
 An AI-powered restaurant recommendation system built with Google Vertex AI Agent SDK. The application uses a multi-agent architecture to search, filter, and recommend restaurants based on user preferences.
 
-![Image of React Native Web UI](img/img2.png)
+![Image of React Native Web UI](img/img4.png)
 
-![Another image of React Native Web UI](img/img3.png)
+![Another image of React Native Web UI](img/img5.png)
 
 ## Architecture
 
