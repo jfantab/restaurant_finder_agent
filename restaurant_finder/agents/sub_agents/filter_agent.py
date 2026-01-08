@@ -58,8 +58,9 @@ def create_filter_agent(use_cloud_mcp: bool = False):
         instruction="""You are a restaurant filtering specialist. Your job is to:
 
 **YOUR AVAILABLE TOOLS (use ONLY these - no other tools exist):**
-- get_restaurant_details: Get detailed info about a restaurant using its Place ID
-- get_restaurant_reviews: Get reviews for a specific restaurant
+- get_restaurants_with_reviews_batch: Get details + reviews for MULTIPLE restaurants in ONE call (PREFERRED - 10x faster!)
+- get_restaurant_details: Get detailed info about ONE restaurant (fallback only)
+- get_restaurant_reviews: Get reviews for ONE restaurant (fallback only)
 - search_restaurants: Search for additional restaurants if needed
 
 DO NOT attempt to call any tool not listed above (e.g., there is NO "recommend_restaurants" tool).
@@ -67,14 +68,15 @@ DO NOT attempt to call any tool not listed above (e.g., there is NO "recommend_r
 1. Analyze the search results from the previous agent:
    - Review all restaurants found
    - Identify the most promising candidates (top 5-8 restaurants)
+   - Extract their place_ids into a list
 
-2. Get detailed information INCLUDING COORDINATES for ALL top candidates:
-   - CRITICAL: Use get_restaurant_details tool for EACH restaurant to get latitude/longitude coordinates
-   - This is REQUIRED - coordinates are needed to display restaurants on the map
-   - Also get phone numbers, websites, and other details
-   - Verify location details
-   - IMPORTANT: Use get_restaurant_reviews tool for EACH restaurant to fetch reviews (limit=10)
-   - Reviews are displayed to users as Google review excerpts
+2. Get ALL data in ONE BATCH CALL (this is 10x faster than individual calls):
+   - CRITICAL: Use get_restaurants_with_reviews_batch with the list of place_ids AND user coordinates
+   - Extract user_latitude and user_longitude from the context (format: "User location: latitude X, longitude Y")
+   - Pass these coordinates to get accurate distance calculations
+   - This returns details + reviews + distances for ALL restaurants at once
+   - ONLY use get_restaurant_details or get_restaurant_reviews individually if the batch call fails
+   - Example: get_restaurants_with_reviews_batch(place_ids=["id1", "id2", "id3"], reviews_limit=10, user_latitude=37.2965, user_longitude=-121.9985)
 
 3. Filter restaurants based on:
    - User's stated preferences (cuisine, price, location)
@@ -92,17 +94,20 @@ DO NOT attempt to call any tool not listed above (e.g., there is NO "recommend_r
    - Note why each restaurant is a good match
    - Pass complete information so recommendation agent can format properly
 
-IMPORTANT: You MUST call get_restaurant_details for each restaurant you're recommending to ensure
-the recommendation agent has coordinates to display restaurants on the map. Without coordinates,
-restaurants cannot be shown on the map!
-
-When passing data to the recommendation agent, format each restaurant with ALL available fields:
+IMPORTANT: The batch tool returns ALL required data including:
 - name, address, phone, website
-- latitude, longitude (CRITICAL - from the restaurant details)
-- rating (out of 5)
-- price_level ($, $$, $$$, $$$$)
-- hours (business hours)
-- reviews (up to 10 reviews with author, rating, and text - from get_restaurant_reviews)
+- latitude, longitude (CRITICAL for map display)
+- distance_miles (when user coordinates are provided)
+- rating, review_count
+- categories, hours
+- reviews array (up to 10 reviews with author, rating, text, date)
+
+**USER CONTEXT:**
+- The user's location coordinates are ALWAYS provided in the context
+- Format: "User location: latitude X, longitude Y"
+- ALWAYS extract and pass these to get_restaurants_with_reviews_batch for accurate distances
+
+DO NOT make individual tool calls unless absolutely necessary. The batch tool is 10x faster!
 """,
         tools=get_sql_tools() if use_cloud_mcp else [get_sql_toolset()],
         after_tool_callback=after_tool_callback,

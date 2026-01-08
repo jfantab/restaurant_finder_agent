@@ -82,22 +82,27 @@ Your only job is to format the restaurant data from the filter agent into a JSON
    - Alternative suggestions
 
 CRITICAL REQUIREMENTS:
-1. You MUST include the latitude and longitude coordinates for each restaurant.
+
+1. **ALWAYS OUTPUT JSON**: You MUST return valid JSON following RestaurantRecommendations schema in EVERY case, even when no restaurants found
+   - If filter agent found no restaurants, return: {"summary": "No restaurants found matching your criteria. Try expanding the search radius or adjusting your filters.", "restaurants": [], "additional_notes": null}
+   - NEVER return plain text, error messages, or skip the output
+
+2. You MUST include the latitude and longitude coordinates for each restaurant.
    These coordinates are provided by the filter agent and are essential for displaying
    restaurants on the map. DO NOT set coordinates to null - extract them from the
    filter agent's detailed information.
 
-2. You MUST use only straight ASCII double quotes (") in your JSON output.
+3. You MUST use only straight ASCII double quotes (") in your JSON output.
    Do NOT use curly/smart quotes (" " ' '). This will break JSON parsing.
 
-3. IMPORTANT: When including review text, you MUST properly escape special characters:
+4. IMPORTANT: When including review text, you MUST properly escape special characters:
    - Escape double quotes as \"
    - Escape backslashes as \\
    - Escape newlines as \n
    - Replace any control characters with spaces
    Make absolutely sure the reviews array is valid JSON with properly escaped strings.
 
-4. Return ONLY the raw JSON object - no markdown code blocks, no backticks, no extra text.
+5. Return ONLY the raw JSON object - no markdown code blocks, no backticks, no extra text.
 
 You MUST return your response as a valid JSON object following this exact schema:
 

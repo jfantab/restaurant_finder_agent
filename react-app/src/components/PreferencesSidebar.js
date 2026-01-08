@@ -129,6 +129,13 @@ export default function PreferencesSidebar({ preferences, onPreferencesChange, u
               </Text>
             </View>
           )}
+          {userLocation?.lat && userLocation?.lng && (
+            <View style={styles.coordinatesDisplay}>
+              <Text variant="bodySmall" style={styles.coordinatesText}>
+                Lat: {userLocation.lat.toFixed(6)}, Lng: {userLocation.lng.toFixed(6)}
+              </Text>
+            </View>
+          )}
           <STButton
             mode="outlined"
             icon="crosshairs-gps"
@@ -349,6 +356,15 @@ const styles = StyleSheet.create({
   cityName: {
     fontWeight: '500',
     color: '#333',
+  },
+  coordinatesDisplay: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  coordinatesText: {
+    color: '#666',
+    fontFamily: 'monospace',
   },
   dropdownContainer: {
     paddingHorizontal: 16,

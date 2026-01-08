@@ -12,16 +12,8 @@ export default function ChatMessage({
     const theme = useTheme();
     const isUser = message.role === 'user';
     const restaurants = message.restaurants || [];
-    const [expandedReviews, setExpandedReviews] = useState({});
     const [modalVisible, setModalVisible] = useState(false);
     const [modalRestaurant, setModalRestaurant] = useState(null);
-
-    const toggleExpandReviews = (restaurantIndex) => {
-        setExpandedReviews(prev => ({
-            ...prev,
-            [restaurantIndex]: !prev[restaurantIndex]
-        }));
-    };
 
     const isRestaurantSelected = (restaurant) => {
         if (!selectedRestaurant) return false;
@@ -144,7 +136,7 @@ export default function ChatMessage({
                                             compact
                                             style={styles.chip}
                                         >
-                                            {restaurant.rating}/10
+                                            {restaurant.rating}/5
                                         </Chip>
                                     )}
                                     {restaurant.price_level && (
@@ -197,85 +189,23 @@ export default function ChatMessage({
                                     </Text>
                                 )}
 
-                                {/* Reviews Section - Show only first 3 on card */}
-                                {restaurant.reviews &&
-                                    restaurant.reviews.length > 0 && (
-                                        <View style={styles.reviewsContainer}>
-                                            <Text
-                                                variant="labelMedium"
-                                                style={styles.reviewsTitle}
-                                            >
-                                                Reviews
-                                            </Text>
-                                            {restaurant.reviews.slice(0, 3).map(
-                                                (review, reviewIndex) => {
-                                                    const isExpanded = expandedReviews[index];
-                                                    const shouldTruncate = review.text && review.text.length > 150 && !isExpanded;
-                                                    return (
-                                                    <View
-                                                        key={reviewIndex}
-                                                        style={
-                                                            styles.reviewItem
-                                                        }
-                                                    >
-                                                        <Text
-                                                            variant="labelSmall"
-                                                            style={
-                                                                styles.reviewAuthor
-                                                            }
-                                                        >
-                                                            {review.author}
-                                                        </Text>
-                                                        {review.rating && (
-                                                            <View style={styles.ratingRow}>
-                                                                <Text
-                                                                    variant="labelSmall"
-                                                                    style={styles.ratingLabel}
-                                                                >
-                                                                    Rating:
-                                                                </Text>
-                                                                <Text style={styles.starsFilled}>
-                                                                    {'★'.repeat(Math.round(review.rating))}
-                                                                </Text>
-                                                                <Text style={styles.starsEmpty}>
-                                                                    {'★'.repeat(5 - Math.round(review.rating))}
-                                                                </Text>
-                                                            </View>
-                                                        )}
-                                                        <Text
-                                                            variant="bodySmall"
-                                                            style={
-                                                                styles.reviewText
-                                                            }
-                                                        >
-                                                            {shouldTruncate
-                                                                ? `${review.text.substring(0, 150)}...`
-                                                                : review.text}
-                                                        </Text>
-                                                    </View>
-                                                    );
-                                                }
-                                            )}
-                                            {restaurant.reviews.slice(0, 3).some(r => r.text && r.text.length > 150) && (
-                                                <TouchableOpacity
-                                                    onPress={(e) => {
-                                                        e.stopPropagation();
-                                                        toggleExpandReviews(index);
-                                                    }}
-                                                    style={styles.expandReviewsButton}
-                                                >
-                                                    <Text style={styles.expandReviewsButtonText}>
-                                                        {expandedReviews[index] ? 'Show Less' : 'Show Full Reviews'}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            )}
-                                            {restaurant.reviews.length > 3 && (
-                                                <Text style={styles.moreReviewsText}>
-                                                    +{restaurant.reviews.length - 3} more reviews in details
-                                                </Text>
-                                            )}
-                                        </View>
-                                    )}
+                                {/* Review Summary Section */}
+                                {restaurant.review_summary && (
+                                    <View style={styles.reviewSummaryContainer}>
+                                        <Text
+                                            variant="labelMedium"
+                                            style={styles.reviewSummaryTitle}
+                                        >
+                                            Customer Reviews
+                                        </Text>
+                                        <Text
+                                            variant="bodySmall"
+                                            style={styles.reviewSummaryText}
+                                        >
+                                            {restaurant.review_summary}
+                                        </Text>
+                                    </View>
+                                )}
                             </Card.Content>
                         </Card>
                     ))}
@@ -310,7 +240,7 @@ export default function ChatMessage({
                                 <View style={styles.modalChipsRow}>
                                     {modalRestaurant.rating && (
                                         <Chip icon="star" style={styles.modalChip}>
-                                            {modalRestaurant.rating}/10
+                                            {modalRestaurant.rating}/5
                                         </Chip>
                                     )}
                                     {modalRestaurant.price_level && (
@@ -408,37 +338,17 @@ export default function ChatMessage({
                                     )}
                                 </View>
 
-                                {/* Reviews Section */}
-                                {modalRestaurant.reviews && modalRestaurant.reviews.length > 0 && (
+                                {/* Review Summary Section */}
+                                {modalRestaurant.review_summary && (
                                     <View style={styles.modalSection}>
                                         <Text variant="titleSmall" style={styles.modalSectionTitle}>
-                                            Reviews ({modalRestaurant.reviews.length})
+                                            Customer Reviews
                                         </Text>
-                                        {modalRestaurant.reviews.map((review, reviewIndex) => (
-                                            <View key={reviewIndex} style={styles.modalReviewItem}>
-                                                <View style={styles.reviewHeader}>
-                                                    <Text variant="labelMedium" style={styles.modalReviewAuthor}>
-                                                        {review.author}
-                                                    </Text>
-                                                    {review.rating && (
-                                                        <View style={styles.ratingRow}>
-                                                            <Text style={styles.ratingLabel}>
-                                                                Rating:
-                                                            </Text>
-                                                            <Text style={styles.starsFilled}>
-                                                                {'★'.repeat(Math.round(review.rating))}
-                                                            </Text>
-                                                            <Text style={styles.starsEmpty}>
-                                                                {'★'.repeat(5 - Math.round(review.rating))}
-                                                            </Text>
-                                                        </View>
-                                                    )}
-                                                </View>
-                                                <Text variant="bodyMedium" style={styles.modalReviewText}>
-                                                    {review.text}
-                                                </Text>
-                                            </View>
-                                        ))}
+                                        <View style={styles.modalReviewSummaryBox}>
+                                            <Text variant="bodyMedium" style={styles.modalReviewSummaryText}>
+                                                {modalRestaurant.review_summary}
+                                            </Text>
+                                        </View>
                                     </View>
                                 )}
                             </ScrollView>
@@ -521,68 +431,23 @@ const styles = StyleSheet.create({
         marginTop: 8,
         fontStyle: 'italic',
     },
-    reviewsContainer: {
+    reviewSummaryContainer: {
         marginTop: 12,
         paddingTop: 12,
         borderTopWidth: 1,
         borderTopColor: '#E6E9EF',
     },
-    reviewsTitle: {
+    reviewSummaryTitle: {
         fontWeight: '600',
         color: '#262730',
         marginBottom: 8,
     },
-    reviewItem: {
-        marginBottom: 10,
-        paddingBottom: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F0F2F6',
-    },
-    reviewAuthor: {
-        fontWeight: '500',
-        color: '#31333F',
-        fontSize: 14,
-    },
-    ratingRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 4,
-    },
-    ratingLabel: {
-        color: '#31333F',
-        fontSize: 14,
-        marginRight: 4,
-    },
-    starsFilled: {
-        color: '#FFA000',
-        fontSize: 16,
-    },
-    starsEmpty: {
-        color: '#E0E0E0',
-        fontSize: 16,
-    },
-    reviewText: {
+    reviewSummaryText: {
         color: '#5F6368',
-        lineHeight: 18,
-    },
-    expandReviewsButton: {
-        marginTop: 8,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        backgroundColor: '#E8F0FE',
-        borderRadius: 6,
-        alignSelf: 'flex-start',
-    },
-    expandReviewsButtonText: {
-        color: '#1A73E8',
-        fontSize: 13,
-        fontWeight: '500',
-    },
-    moreReviewsText: {
-        color: '#5F6368',
-        fontSize: 13,
+        lineHeight: 20,
         fontStyle: 'italic',
-        marginTop: 8,
+        flexWrap: 'wrap',
+        flexShrink: 1,
     },
     // Modal Styles
     modalOverlay: {
@@ -672,24 +537,18 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         fontSize: 14,
     },
-    modalReviewItem: {
+    modalReviewSummaryBox: {
         backgroundColor: '#F8F9FA',
         borderRadius: 8,
-        padding: 12,
-        marginBottom: 12,
+        padding: 16,
+        borderLeftWidth: 3,
+        borderLeftColor: '#1A73E8',
     },
-    reviewHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    modalReviewAuthor: {
-        fontWeight: '600',
-        color: '#31333F',
-    },
-    modalReviewText: {
+    modalReviewSummaryText: {
         color: '#5F6368',
-        lineHeight: 20,
+        lineHeight: 22,
+        fontStyle: 'italic',
+        flexWrap: 'wrap',
+        flexShrink: 1,
     },
 });

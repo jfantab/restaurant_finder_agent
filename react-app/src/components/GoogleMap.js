@@ -197,7 +197,7 @@ function GoogleMap({ restaurants, userLocation, onLocationChange, selectedRestau
               contentHTML += '<h3 style="margin: 0 0 10px 0; color: #202124;">' + restaurant.name + '</h3>';
 
               if (restaurant.rating) {
-                contentHTML += '<div style="margin: 5px 0; font-size: 14px;">⭐ <b>' + restaurant.rating + '</b> / 10.0</div>';
+                contentHTML += '<div style="margin: 5px 0; font-size: 14px;">⭐ <b>' + restaurant.rating + '</b> / 5.0</div>';
               }
 
               if (restaurant.price_level) {

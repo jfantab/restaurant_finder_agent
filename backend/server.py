@@ -10,12 +10,20 @@ import sys
 import json
 import asyncio
 import time
+import re
+import uuid
+import tempfile
+import traceback
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from dotenv import load_dotenv
+from google.genai import types
 
 # Load environment variables
 load_dotenv()
+
+# Add parent directory to path for local imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -40,57 +48,36 @@ local_runner = None
 local_agent = None
 
 if run_local:
-    # Local mode: Import and create the agent locally
     print("Starting in LOCAL mode...")
-
-    # Add parent directory to path for imports
-    parent_path = os.path.join(os.path.dirname(__file__), '..')
-    sys.path.insert(0, parent_path)
-
     from restaurant_finder.setup import setup_environment
-    from restaurant_finder.agents import create_router_agent
+    from restaurant_finder.agents.streamlined_restaurant_agent import create_streamlined_restaurant_agent
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
 
-    # Initialize environment and Vertex AI
     setup_environment()
 
-    # Create the local agent (router agent handles routing and follow-ups)
-    # Always uses SQL tools via stdio MCP server for local mode
-    local_agent = create_router_agent(use_cloud_mcp=False)
-
-    # Create session service and runner
-    session_service = InMemorySessionService()
+    # Use streamlined restaurant agent directly (no router)
+    local_agent = create_streamlined_restaurant_agent(use_cloud_mcp=False)
     local_runner = Runner(
         agent=local_agent,
         app_name="restaurant_finder_backend",
-        session_service=session_service
+        session_service=InMemorySessionService()
     )
-
     print(f"Local agent initialized: {local_agent.name}")
-    print(f"  - Using stdio MCP for SQL tools")
+    print("Using streamlined restaurant agent (direct, no router)")
 else:
-    # Cloud mode: Connect to deployed Vertex AI agent
     print("Starting in CLOUD mode...")
-
     import vertexai
     from vertexai import agent_engines
 
-    # Initialize Vertex AI
     vertexai.init(project=project_id, location=location)
-
-    # Find the deployed agent
-    agents_list = list(agent_engines.list())
-    deployed_agent = next(
-        (agent_obj for agent_obj in agents_list if agent_obj.display_name == agent_name),
+    agent = next(
+        (a for a in agent_engines.list() if a.display_name == agent_name),
         None
     )
-
-    if not deployed_agent:
+    if not agent:
         raise ValueError(f"Agent '{agent_name}' not found in Vertex AI. Please deploy it first.")
-
-    agent = deployed_agent
-    print(f"Connected to deployed agent: {deployed_agent.resource_name}")
+    print(f"Connected to deployed agent: {agent.resource_name}")
 
 def cleanup_old_sessions():
     """Remove sessions older than 1 hour."""
@@ -199,6 +186,9 @@ def search_restaurants():
         print(f"[DEBUG] Full prompt being sent to agent:")
         print(f"[DEBUG] {full_prompt}")
 
+        # Performance timing
+        start_time = time.time()
+
         if run_local:
             # Local mode: Use the Runner to execute the agent
             response_text, used_session_id = asyncio.run(run_local_agent(full_prompt, session_id))
@@ -207,11 +197,18 @@ def search_restaurants():
             response_text = asyncio.run(get_cloud_response(full_prompt))
             used_session_id = session_id
 
+        # Performance logging
+        agent_time = time.time() - start_time
+        print(f"[PERFORMANCE] Agent execution time: {agent_time:.2f}s")
+
         print(f"[DEBUG] Response text length: {len(response_text)}")
         print(f"[DEBUG] Response text first 300 chars: {response_text[:300]}")
 
         # Try to parse restaurant data from response
+        parse_start = time.time()
         restaurants = extract_restaurants_from_response(response_text)
+        parse_time = time.time() - parse_start
+        print(f"[PERFORMANCE] JSON parsing time: {parse_time:.3f}s")
 
         # Extract summary from response
         summary = extract_summary_from_response(response_text)
@@ -243,7 +240,6 @@ def search_restaurants():
         })
 
     except Exception as e:
-        import traceback
         traceback.print_exc()
         return jsonify({
             "success": False,
@@ -262,9 +258,6 @@ async def run_local_agent(prompt: str, session_id: str = None) -> tuple[str, str
     Returns:
         Tuple of (response_text, session_id)
     """
-    from google.genai import types
-    import uuid
-
     user_id = "flask_user"
 
     # Use provided session_id or create a new one
@@ -298,8 +291,7 @@ async def run_local_agent(prompt: str, session_id: str = None) -> tuple[str, str
     )
 
     # Run the agent and collect responses (use async version)
-    last_recommendation_response = None
-    last_router_response = None
+    last_response = None
     full_responses = []
 
     async for event in local_runner.run_async(
@@ -311,54 +303,32 @@ async def run_local_agent(prompt: str, session_id: str = None) -> tuple[str, str
         if hasattr(event, 'author'):
             print(f"[DEBUG] Event from author: {event.author}")
 
-        # Check for final response from recommendation agent (inside the tool)
-        # Also check for restaurant_finder which is the SequentialAgent name
-        if hasattr(event, 'author') and event.author in ('RestaurantRecommendationAgent', 'restaurant_finder'):
+        # Check for StreamlinedRestaurantAgent response (direct agent, no router)
+        if hasattr(event, 'author') and event.author == 'StreamlinedRestaurantAgent':
             if hasattr(event, 'content') and event.content:
                 for part in event.content.parts:
                     if hasattr(part, 'text') and part.text:
-                        # Check if this looks like JSON (contains restaurants array)
-                        if '"restaurants"' in part.text or "'restaurants'" in part.text:
-                            last_recommendation_response = part.text
-                            print(f"[DEBUG] Found recommendation response from {event.author}")
+                        last_response = part.text
+                        print(f"[DEBUG] Found StreamlinedRestaurantAgent response: {part.text[:100]}")
 
-        # Check for response from router agent
-        if hasattr(event, 'author') and event.author == 'router_agent':
-            if hasattr(event, 'content') and event.content:
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        last_router_response = part.text
-                        # Also check if router is passing through JSON (e.g., from tool response)
-                        if '"restaurants"' in part.text:
-                            print(f"[DEBUG] Router agent response contains restaurants JSON")
-                            last_recommendation_response = part.text
-
-        # Collect all text responses
+        # Collect all text responses as fallback
         if hasattr(event, 'content') and event.content:
             for part in event.content.parts:
                 if hasattr(part, 'text') and part.text:
                     full_responses.append(part.text)
-                    # Also check all responses for JSON with restaurants
-                    if '"restaurants"' in part.text and not last_recommendation_response:
-                        print(f"[DEBUG] Found restaurants JSON in response from {getattr(event, 'author', 'unknown')}")
-                        last_recommendation_response = part.text
 
-    # Return the recommendation JSON if available, otherwise router response, otherwise last response
-    # Prefer the recommendation agent's structured output for restaurant searches
-    print(f"[DEBUG] last_recommendation_response: {last_recommendation_response[:100] if last_recommendation_response else 'None'}")
-    print(f"[DEBUG] last_router_response: {last_router_response[:100] if last_router_response else 'None'}")
+    # Return the response
+    print(f"[DEBUG] last_response: {last_response[:100] if last_response else 'None'}")
     print(f"[DEBUG] full_responses count: {len(full_responses)}")
 
-    if last_recommendation_response:
-        print("[DEBUG] Returning last_recommendation_response")
-        return last_recommendation_response, session_id
-    elif last_router_response:
-        print("[DEBUG] Returning last_router_response")
-        return last_router_response, session_id
+    if last_response:
+        print("[DEBUG] Returning last_response from StreamlinedRestaurantAgent")
+        return last_response, session_id
     elif full_responses:
         print("[DEBUG] Returning last full_response")
         return full_responses[-1], session_id
     else:
+        print("[ERROR] No response captured from agent!")
         return "No response from agent", session_id
 
 
@@ -452,7 +422,6 @@ def stream_search_restaurants():
                 yield f"data: {json.dumps(result)}\n\n"
 
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 error_result = {
                     "success": False,
@@ -503,14 +472,8 @@ def fix_invalid_json_escapes(text):
     Returns:
         Text with invalid escapes fixed
     """
-    import re
-    # Fix \' (escaped single quote) - not valid in JSON, just use '
     text = re.sub(r"(?<!\\)\\'", "'", text)
-    # Fix other common invalid escapes by removing the backslash
-    # Match backslash followed by a character that's not a valid JSON escape
-    # Valid: " \ / b f n r t u
     text = re.sub(r'\\([^"\\/bfnrtu])', r'\1', text)
-    # Remove any control characters (0x00-0x1F except \t, \n, \r)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', text)
     return text
 
@@ -524,8 +487,6 @@ def extract_restaurants_from_response(response_text):
     Returns:
         List of restaurant dictionaries or None
     """
-    import re
-
     # Normalize quotes and fix invalid escapes before processing
     response_text = normalize_json_quotes(response_text)
     response_text = fix_invalid_json_escapes(response_text)
@@ -597,14 +558,21 @@ def extract_restaurants_from_response(response_text):
             except json.JSONDecodeError as e:
                 print(f"[DEBUG] JSON parse error: {e}")
                 print(f"[DEBUG] Problematic JSON around char {e.pos}: {json_text[max(0, e.pos-100):min(len(json_text), e.pos+100)]}")
-                # Try to save the full JSON to a file for debugging
-                import tempfile
                 with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
                     f.write(json_text)
                     print(f"[DEBUG] Full JSON saved to: {f.name}")
                 # This is plain text, not JSON - return None gracefully
                 print("[DEBUG] Returning None for plain text response")
                 return None
+
+        # Handle agent response wrappers
+        # Try to unwrap agent-name-based wrappers like {"StreamlinedRestaurantAgent_response": {...}}
+        if isinstance(data, dict) and len(data) == 1:
+            key = list(data.keys())[0]
+            if key.endswith('_response') or key.endswith('Agent_response'):
+                print(f"[DEBUG] Found agent response wrapper: {key}")
+                data = data[key]
+                print(f"[DEBUG] Unwrapped data, keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
 
         # Handle nested router response: {"restaurant_finder_response": {"result": "<JSON string>"}}
         if isinstance(data, dict) and 'restaurant_finder_response' in data:
@@ -619,8 +587,6 @@ def extract_restaurants_from_response(response_text):
                 except json.JSONDecodeError as e:
                     print(f"[DEBUG] Nested JSON parse error: {e}")
                     print(f"[DEBUG] Problematic JSON around char {e.pos}: {result[max(0, e.pos-100):min(len(result), e.pos+100)]}")
-                    # Try to save the full JSON to a file for debugging
-                    import tempfile
                     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
                         f.write(result)
                         print(f"[DEBUG] Full nested JSON saved to: {f.name}")
@@ -671,6 +637,7 @@ def extract_restaurants_from_response(response_text):
                         'phone': restaurant.get('phone', ''),
                         'website': restaurant.get('website', ''),
                         'description': restaurant.get('description', ''),
+                        'review_summary': restaurant.get('review_summary', ''),
                         'reviews': reviews if reviews else None
                     })
             print(f"[DEBUG] Extracted {len(restaurants)} restaurants with coordinates")
@@ -679,7 +646,6 @@ def extract_restaurants_from_response(response_text):
             print(f"[DEBUG] No restaurants array found in data")
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"Error parsing restaurant data: {e}")
-        import traceback
         traceback.print_exc()
         return None
 
@@ -694,8 +660,6 @@ def extract_summary_from_response(response_text):
     Returns:
         Summary string or None
     """
-    import re
-
     # Normalize quotes and fix invalid escapes before processing
     response_text = normalize_json_quotes(response_text)
     response_text = fix_invalid_json_escapes(response_text)
@@ -753,6 +717,13 @@ def extract_summary_from_response(response_text):
 
             # Parse the extracted JSON (use strict=False to handle control characters)
             data = json.loads(json_text, strict=False)
+
+        # Handle agent response wrappers
+        # Try to unwrap agent-name-based wrappers like {"StreamlinedRestaurantAgent_response": {...}}
+        if isinstance(data, dict) and len(data) == 1:
+            key = list(data.keys())[0]
+            if key.endswith('_response') or key.endswith('Agent_response'):
+                data = data[key]
 
         # Handle nested router response: {"restaurant_finder_response": {"result": "<JSON string>"}}
         if isinstance(data, dict) and 'restaurant_finder_response' in data:

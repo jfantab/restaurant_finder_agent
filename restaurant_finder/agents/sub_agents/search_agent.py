@@ -6,7 +6,7 @@ from google.adk.agents import Agent
 try:
     from ...sql_tools import get_sql_tools, get_sql_toolset
 except ImportError:
-    from sql_tools import get_sql_tools, get_sql_toolset
+    from restaurant_finder.sql_tools import get_sql_tools, get_sql_toolset
 
 
 def create_search_agent(use_cloud_mcp: bool = False):
@@ -54,15 +54,13 @@ DO NOT attempt to call any tool not listed above.
    - **RE-RANKING**: "sort by rating", "nearest first" → Note for later (search doesn't sort)
    - **REPLACING**: "show Chinese instead" → REPLACE cuisine from Italian to Chinese
 
-3. **Determine coordinates (CRITICAL - Read this carefully):**
-   - **FIRST PRIORITY**: Check if context includes "User location: latitude X, longitude Y"
-     - If YES: ALWAYS use those exact coordinates from the context
-     - Do NOT use San Jose default coordinates if user location is provided
-   - **SECOND PRIORITY**: If the user provides specific coordinates in their request, use those
-   - **ONLY IF NO COORDINATES PROVIDED**: If the user mentions a general location like "San Jose" or "downtown" AND there is NO "User location" in the context, then use these defaults:
-     - San Jose downtown: latitude=37.3382, longitude=-121.8863
-     - San Jose: latitude=37.3382, longitude=-121.8863
-   - **NEVER** default to San Jose coordinates when "User location: latitude X, longitude Y" is present in the context
+3. **Determine coordinates (CRITICAL):**
+   - **The user's location (latitude/longitude) is ALWAYS provided in the context**
+   - **NEVER ask the user for their location** - it's automatically included in every request
+   - Look for "User location: latitude X, longitude Y" in the context
+   - Extract and use those exact coordinates for the search
+   - **DO NOT** use default San Jose coordinates when user location is provided in context
+   - Example: If context says "User location: latitude 37.2965, longitude -121.9985", use those exact values
 
 4. **Build search parameters with accumulated filters:**
    - Start with filters from "Current filter state"
